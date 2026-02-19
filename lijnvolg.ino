@@ -15,7 +15,7 @@ const int baseSpeed = 150; // Snelheid rechtdoor (0 tot 255)  --> trager zetten 
 const float Kp = 0.05;     // Bijstuur-agressiviteit  te traag reageren -> 0.1 van maken, en te schakkend -> 0.02 
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200); 
 
   // Motoren instellen als output
   pinMode(motorLinksPWM, OUTPUT);
@@ -63,3 +63,4 @@ void loop() {
   analogWrite(motorLinksPWM, linkermotorSnelheid);
   analogWrite(motorRechtsPWM, rechtermotorSnelheid);
 }
+// ...
