@@ -63,4 +63,6 @@ void loop() {
   analogWrite(motorLinksPWM, linkermotorSnelheid);
   analogWrite(motorRechtsPWM, rechtermotorSnelheid);
 }
-// helleverybody 
+// andere sensors
+// PD in plaats van P
+// hoofdlus
