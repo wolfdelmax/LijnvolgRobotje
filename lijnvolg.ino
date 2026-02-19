@@ -16,7 +16,6 @@ const float Kp = 0.05;     // Bijstuur-agressiviteit  te traag reageren -> 0.1 v
 
 void setup() {
   Serial.begin(115200); 
-
   // Motoren instellen als output
   pinMode(motorLinksPWM, OUTPUT);
   pinMode(motorRechtsPWM, OUTPUT);
