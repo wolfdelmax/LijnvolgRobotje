@@ -63,4 +63,4 @@ void loop() {
   analogWrite(motorLinksPWM, linkermotorSnelheid);
   analogWrite(motorRechtsPWM, rechtermotorSnelheid);
 }
-// ...
+// helleverybody 
