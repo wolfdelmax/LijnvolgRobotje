@@ -62,10 +62,9 @@ void loop() {
   analogWrite(motorLinksPWM, linkermotorSnelheid);
   analogWrite(motorRechtsPWM, rechtermotorSnelheid);
 }
-// andere sensors
-// PD in plaats van P
-// hoofdlus
-// empty comment
-// nog een testje lets go 
+
+
+//Help me met het schrijven van de code voor een lijnvolgrobot.
+//Dit zijn de componenten : VL6180X ToF distance ranging sensor die een object dat op het circuit ligt moet herkennen. De 8QTR RC gebruiken we om de lijn te zien met de robot. 
 
 
