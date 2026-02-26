@@ -1,4 +1,5 @@
 #include <QTRSensors.h>
+#include <Adafruit_VL6180X.h>
 
 QTRSensors qtr;
 
@@ -68,3 +69,4 @@ void loop() {
 //Dit zijn de componenten : VL6180X ToF distance ranging sensor die een object dat op het circuit ligt moet herkennen. De 8QTR RC gebruiken we om de lijn te zien met de robot. 
 
 
+adafr
