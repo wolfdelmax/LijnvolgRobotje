@@ -2,7 +2,7 @@
 #include <Adafruit_VL6180X.h>
 
 QTRSensors qtr;
-
+Adafruit_VL6180X vl = Adafruit_VL6180X();
 const uint8_t SensorCount = 8;
 uint16_t sensorValues[SensorCount];
 
@@ -64,9 +64,3 @@ void loop() {
   analogWrite(motorRechtsPWM, rechtermotorSnelheid);
 }
 
-
-//Help me met het schrijven van de code voor een lijnvolgrobot.
-//Dit zijn de componenten : VL6180X ToF distance ranging sensor die een object dat op het circuit ligt moet herkennen. De 8QTR RC gebruiken we om de lijn te zien met de robot. 
-
-
-adafr
