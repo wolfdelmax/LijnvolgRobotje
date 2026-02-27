@@ -16,7 +16,7 @@ const int motorRechtsPWM = 17;
 
 // --- SNELHEID INSTELLINGEN (PROCENT) ---
 int snelheidMapping = 40;
-int snelheidRace = 85; 
+int snelheidRace = 80; 
 int baseSpeed;                     
 
 // --- PD INSTELLINGEN --- 
@@ -24,12 +24,18 @@ float Kp = 0.05;
 float Kd = 0.3;      
 int lastError = 0;   
 
+// --- PATH SOLVING (DE KAART) ---
+char pad[150];       // Opslag voor afslagen: 'L', 'R', 'S'
+int padLengte = 0;
+int stapIndex = 0;   // Voor het afspelen in ronde 2/3
+const int stopAfstand = 60;
+
 // --- TIMING & STATUS ---
 int huidigePoging = 1; 
 bool isFinished = false;
 unsigned long startTime = 0;
 unsigned long finishTimer = 0;
-const int vierkantDetectieTijd = 300; // Voor het 40x40cm zwarte vlak
+const int vierkantDetectieTijd = 350; // Voor het 40x40cm zwarte vlak; deze naargelang snelheid moet nog worden verbeterd
 
 void setup() {
   Serial.begin(115200);
@@ -38,7 +44,11 @@ void setup() {
   // 1. Geheugen laden
   preferences.begin("robot-data", false);
   huidigePoging = preferences.getInt("poging", 1);
-  
+  padLengte = preferences.getInt("padLengte", 0);
+  if (padLengte > 0) {
+    preferences.getBytes("pad", pad, 150);
+  }
+
   // 2. ToF Initialisatie
   if (!vl.begin()) {
     Serial.println("ToF Fout!");
@@ -56,100 +66,223 @@ void setup() {
 
   kalibreerRobot();
   
+  // VISUALISATIE: Laat het geladen pad zien bij opstarten
+  Serial.println("--- ROBOT STATUS ---");
   Serial.print("POGING: "); Serial.println(huidigePoging);
+  toonPad(); 
+  Serial.println("--------------------");
+
   startTime = millis();
 }
 
 void loop() {
-  // 1. Controleer op obstakels
+  if (isFinished) return;
+
+  // 1. ToF Veiligheid (Object detectie)
   if (objectGedetecteerd()) {
     remmen();
-    // We plotten nog steeds, zodat we zien dat de error 0 is bij stilstand
-    plotGegevens(0, 0); 
+    // print output fixen
     return; 
   }
 
-  // 2. Berekeningen
-  int error = berekenFout();
-  int correctie = berekenPD(error);
+  // 2. Stop-vak detectie (Zwart 40x40cm)
+  // Negeer de eerste 4 sec voor de rand van het startvak, misschien minder?
+  if (millis() - startTime > 4000) {
+    if (checkStopVak()) {
+      finishActie();
+      return;
+    }
+  }
 
-  // 3. Actie
-  rijden(correctie);
+  // 3. Navigatie & Lijnvolgen
+  uint16_t positie = qtr.readLineBlack(sensorValues);
 
+  // Check op splitsing (Kruispunt, T of Y)
+  if (sensorValues[0] > 700 || sensorValues[7] > 700) {
+    verwerkSplitsing();
+  } 
+  // Check op doodlopend eind (Geen lijn meer)
+  else if (isDoodlopend()) {
+    if (huidigePoging == 1) {
+       verwerkDoodlopend();
+    }
+  } 
+  // Standaard Lijnvolgen
+  else {
+    int error = (int)positie - 3500;
+    int correctie = berekenPD(error);
+    rijden(correctie);
+  }
   // 4. Visualisatie (voor de Serial Plotter)
   plotGegevens(error, correctie);
 }
 
-// --- FUNCTIES ---
-bool checkStopVak() {
-  int zwartSensoren = 0;
-  for (int i = 0; i < SensorCount; i++) {
-    if (sensorValues[i] > 800) zwartSensoren++;
-  }
+// --- VISUALISATIE FUNCTIE ---
 
-  // Als we op een massief zwart vlak rijden (zoals het stopvak van 40cm)
-  if (zwartSensoren >= 7) {
-    if (finishTimer == 0) finishTimer = millis();
-    // Als we al 300ms lang zwart zien, is het GEEN kruispunt maar het stopvak
-    if (millis() - finishTimer > vierkantDetectieTijd) return true;
+void toonPad() {
+  Serial.print("Huidig Pad (");
+  Serial.print(padLengte);
+  Serial.print(" stappen): ");
+  
+  if (padLengte == 0) {
+    Serial.println("LEEG (Nog geen mapping beschikbaar)");
   } else {
-    finishTimer = 0; 
+    for (int i = 0; i < padLengte; i++) {
+      Serial.print(pad[i]);
+      if (i < padLengte - 1) Serial.print(" -> ");
+    }
+    Serial.println();
   }
+}
+
+// --- NAVIGATIE FUNCTIES ---
+
+void verwerkSplitsing() {
+  // Rij een klein stukje door om de sensoren boven het midden van het kruispunt te krijgen
+  analogWrite(motorLinksPWM, baseSpeed);
+  analogWrite(motorRechtsPWM, baseSpeed);
+  delay(50); 
+  qtr.readLineBlack(sensorValues);
+
+  if (huidigePoging == 1) {
+    // MAPPING MODUS: Altijd links proberen (Left Hand Rule)
+    if (sensorValues[0] > 700) {
+      pad[padLengte++] = 'L';
+      draaiLinks();
+    } else if (sensorValues[3] > 700 || sensorValues[4] > 700) {
+      pad[padLengte++] = 'S';
+      doorrijden();
+    } else {
+      pad[padLengte++] = 'R';
+      draaiRechts();
+    }
+    optimaliseerPad()$; // Direct opschonen als we een 'U' hebben toegevoegd
+    toonpad();
+  } else {
+    // RACE MODUS: Volg de opgeslagen kaart
+    char actie = pad[stapIndex++];
+    if (actie == 'L') draaiLinks();
+    else if (actie == 'R') draaiRechts();
+    else doorrijden();
+  }
+}
+
+void verwerkDoodlopend() {
+  pad[padLengte++] = 'U';
+  omdraaien();
+  optimaliseerPad();
+  toonpad();
+}
+
+void optimaliseerPad() {
+  // Als we een U-turn hebben gemaakt, kunnen we het pad verkorten
+  if (padLengte < 3 || pad[padLengte - 2] != 'U') return;
+
+  // Maze solving logica: vervang de foute afslag door de kortere weg
+  // Bijvoorbeeld: Links + U-turn + Rechts = Eigenlijk rechtdoor (S)
+  char totaal[3] = {pad[padLengte-3], pad[padLengte-2], pad[padLengte-1]};
+  char vervanging = ' ';
+
+  if (totaal[0] == 'L' && totaal[2] == 'R') vervanging = 'S';
+  else if (totaal[0] == 'L' && totaal[2] == 'S') vervanging = 'R';
+  else if (totaal[0] == 'R' && totaal[2] == 'L') vervanging = 'S';
+  else if (totaal[0] == 'S' && totaal[2] == 'L') vervanging = 'R';
+  else if (totaal[0] == 'S' && totaal[2] == 'S') vervanging = 'U';
+  else if (totaal[0] == 'L' && totaal[2] == 'L') vervanging = 'S';
+
+  if (vervanging != ' ') {
+    padLengte -= 3;
+    pad[padLengte++] = vervanging;
+  }
+}
+
+// --- BEWEGINGEN ---
+
+void draaiLinks() {
+  analogWrite(motorLinksPWM, 0);
+  analogWrite(motorRechtsPWM, baseSpeed);
+  delay(200);
+  while (sensorValues[3] < 500 && sensorValues[4] < 500) {
+    qtr.readLineBlack(sensorValues);
+  }
+}
+
+void draaiRechts() {
+  analogWrite(motorLinksPWM, baseSpeed);
+  analogWrite(motorRechtsPWM, 0);
+  delay(200);
+  while (sensorValues[3] < 500 && sensorValues[4] < 500) {
+    qtr.readLineBlack(sensorValues);
+  }
+}
+
+void omdraaien() {
+  analogWrite(motorLinksPWM, baseSpeed);
+  analogWrite(motorRechtsPWM, 0);
+  delay(500); // Draai ruim over de 90 graden heen
+  while (sensorValues[3] < 500 && sensorValues[4] < 500) {
+    qtr.readLineBlack(sensorValues);
+  }
+}
+
+void doorrijden() {
+  analogWrite(motorLinksPWM, baseSpeed);
+  analogWrite(motorRechtsPWM, baseSpeed);
+  delay(150); // Rij over de dwarslijn heen
+}
+
+// --- HULPFUNCTIES ---
+
+bool isDoodlopend() {
+  for (int i = 0; i < SensorCount; i++) {
+    if (sensorValues[i] > 300) return false;
+  }
+  return true;
+}
+
+bool checkStopVak() {
+  int zwart = 0;
+  for (int i = 0; i < SensorCount; i++) if (sensorValues[i] > 800) zwart++;
+  if (zwart >= 7) {
+    if (finishTimer == 0) finishTimer = millis();
+    if (millis() - finishTimer > vierkantDetectieTijd) return true;
+  } else { finishTimer = 0; }
   return false;
 }
 
 void finishActie() {
   remmen();
   isFinished = true;
-  
-  // Volgende poging opslaan voor de herstart
   int volgende = huidigePoging + 1;
-  if (volgende > 3) volgende = 1; // Na poging 3 resetten naar 1
+  if (volgende > 3) volgende = 1;
   
   preferences.putInt("poging", volgende);
+  preferences.putInt("padLengte", padLengte);
+  preferences.putBytes("pad", pad, 150);
   preferences.end();
-  
-  Serial.println("BESTEMMING BEREIKT. Poging opgeslagen in Flash.");
-}
-
-void kalibreerRobot() {
-  Serial.println("Kalibratie start...");
-  for (uint16_t i = 0; i < 400; i++) {
-    qtr.calibrate();
-  }
-  Serial.println("Klaar! Open nu de Serial Plotter (Ctrl+Shift+L)");
-  delay(2000);
-}
-
-bool objectGedetecteerd() {
-  uint8_t range = vl.readRange();
-  uint8_t status = vl.readRangeStatus();
-  return (status == VL6180X_ERROR_NONE && range < stopAfstand);
-}
-
-int berekenFout() {
-  uint16_t position = qtr.readLineBlack(sensorValues);
-  return (int)position - 3500;
-}
-
-int berekenPD(int error) {
-  int afgeleide = error - lastError;
-  int correctie = (error * Kp) + (afgeleide * Kd);
-  lastError = error; 
-  return correctie;
+  Serial.println("FINISH! Kaart opgeslagen.");
+  toonpad();
 }
 
 void rijden(int correctie) {
-  int links = constrain(baseSpeed + correctie, 0, 255);
-  int rechts = constrain(baseSpeed - correctie, 0, 255);
-
-  analogWrite(motorLinksPWM, links);
-  analogWrite(motorRechtsPWM, rechts);
+  analogWrite(motorLinksPWM, constrain(baseSpeed + correctie, 0, 255));
+  analogWrite(motorRechtsPWM, constrain(baseSpeed - correctie, 0, 255));
 }
 
-void remmen() {
-  analogWrite(motorLinksPWM, 0);
-  analogWrite(motorRechtsPWM, 0);
+int berekenPD(int error) {
+  int correctie = (error * Kp) + ((error - lastError) * Kd);
+  lastError = error;
+  return correctie;
+}
+
+bool objectGedetecteerd() {
+  return (vl.readRangeStatus() == VL6180X_ERROR_NONE && vl.readRange() < stopAfstand);
+}
+
+void remmen() { analogWrite(motorLinksPWM, 0); analogWrite(motorRechtsPWM, 0); }
+
+void kalibreerRobot() {
+  for (uint16_t i = 0; i < 400; i++) qtr.calibrate();
 }
 
 void plotGegevens(int error, int correctie) {
