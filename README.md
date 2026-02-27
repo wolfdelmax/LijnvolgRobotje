@@ -8,7 +8,6 @@ zorgt de constant lezing van ToF sensor voor een vertraging in de lus die niet t
 
 TO DO:
 < rond het object navigeren en zwarte lijn terug vinden>
-
-
+< path solving logica>
 
 
