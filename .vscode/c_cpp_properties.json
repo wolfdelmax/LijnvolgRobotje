@@ -1,16 +1,24 @@
 {
     "configurations": [
         {
-            "name": "Win32",
+            "name": "ESP32-Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "C:/Users/overm/Documents/Arduino/libraries/**"
+                "/home/wolfo/.arduino15/packages/esp32/hardware/esp32/3.3.7/cores/esp32",
+                "/home/wolfo/.arduino15/packages/esp32/hardware/esp32/3.3.7/variants/doitESP32devkitV1",
+                "/home/wolfo/Arduino/libraries/**"
             ],
             "defines": [
-                "_DEBUG",
-                "UNICODE",
-                "_UNICODE"
-            ]
+                "ESP32",
+                "ARDUINO=10607",
+                "ARDUINO_ESP32_DEV",
+                "ARDUINO_ARCH_ESP32",
+                "F_CPU=240000000L"
+            ],
+            "compilerPath": "/home/wolfo/.arduino15/packages/esp32/tools/esp-x32/2511/bin/xtensa-esp32-elf-g++",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64"
         }
     ],
     "version": 4
