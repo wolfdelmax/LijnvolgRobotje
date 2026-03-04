@@ -294,7 +294,7 @@ void plotGegevens(int error, int correctie) {
   Serial.println(); 
 }
 
-// KALIBRATIE...................
+// KALIBRATIE....................
 
 void kalibreerRobot() {
   pinMode(2, OUTPUT); // Pin 2 is de ingebouwde LED op de meeste ESP32 boards
