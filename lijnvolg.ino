@@ -86,7 +86,7 @@ void loop() {
   }
 
   // 2. Stop-vak detectie (Zwart 40x40cm)
-  // Negeer de eerste 4 sec voor de rand van het startvak, misschien minder?
+  // Negeer de eerste 4 sec voor de rand van het startvak, misschien minder?.
   if (millis() - startTime > 4000) {
     if (checkStopVak()) {
       finishActie();
@@ -292,4 +292,24 @@ void plotGegevens(int error, int correctie) {
   Serial.print("Correctie:");
   Serial.print(correctie * 10); // Herschaling van de correctie 
   Serial.println(); 
+}
+
+// KALIBRATIE...................
+
+void kalibreerRobot() {
+  pinMode(2, OUTPUT); // Pin 2 is de ingebouwde LED op de meeste ESP32 boards
+  digitalWrite(2, HIGH); // Zet LED aan: START KALIBRATIE
+  
+  Serial.println("KALIBRATIE GESTART: Beweeg de robot over de lijn!");
+
+  // Deze loop duurt ongeveer 5 tot 10 seconden.
+  // Verschuif de robot in deze tijd rustig van links naar rechts over de lijn.
+  for (uint16_t i = 0; i < 400; i++) {
+    qtr.calibrate();
+  }
+
+  digitalWrite(2, LOW); // Zet LED uit: KALIBRATIE KLAAR
+  Serial.println("KALIBRATIE KLAAR! Zet hem neer, hij gaat zo rijden.");
+  
+  delay(2000); // Geef jezelf 2 seconden om je handen weg te halen
 }
