@@ -46,6 +46,8 @@ TO DO:
 
 < reset knop dat geheugen wist naar poging 1>
 
+< wiel dat stiltaat linken met PID???? >
+
 < monitor die ons informatie geeft over de spanning en andere dingen>
 
 
