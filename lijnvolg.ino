@@ -87,7 +87,7 @@ void loop() {
 
   // 2. Stop-vak detectie (Zwart 40x40cm)
   // Negeer de eerste 4 sec voor de rand van het startvak, misschien minder?.
-  if (millis() - startTime > 4000) {
+  if (millis() - startTime > 1500) {
     if (checkStopVak()) {
       finishActie();
       return;
@@ -98,7 +98,7 @@ void loop() {
   uint16_t positie = qtr.readLineBlack(sensorValues);
 
   // Check op splitsing (Kruispunt, T of Y)
-  if (sensorValues[0] > 700 || sensorValues[7] > 700) {
+  if (sensorValues[0] > 700 && sensorValues[7] > 700) {
     verwerkSplitsing();
   } 
   // Check op doodlopend eind (Geen lijn meer)
@@ -149,7 +149,7 @@ void verwerkSplitsing() {
     if (sensorValues[0] > 700) {
       pad[padLengte++] = 'L';
       draaiLinks();
-    } else if (sensorValues[3] > 700 || sensorValues[4] > 700) {
+    } else if (sensorValues[3] > 700 || sensorValues[4] > 700) { 
       pad[padLengte++] = 'S';
       doorrijden();
     } else {
@@ -157,7 +157,11 @@ void verwerkSplitsing() {
       draaiRechts();
     }
     optimaliseerPad(); // Direct opschonen als we een 'U' hebben toegevoegd
+<<<<<<< HEAD
     toonpad();
+=======
+    toonPad();
+>>>>>>> 9f5124e85d31bb3fdc671862a4cffa97922d9907
   } else {
     // RACE MODUS: Volg de opgeslagen kaart
     char actie = pad[stapIndex++];
@@ -171,7 +175,7 @@ void verwerkDoodlopend() {
   pad[padLengte++] = 'U';
   omdraaien();
   optimaliseerPad();
-  toonpad();
+  toonPad();
 }
 
 void optimaliseerPad() {
@@ -179,7 +183,8 @@ void optimaliseerPad() {
   if (padLengte < 3 || pad[padLengte - 2] != 'U') return;
 
   // Maze solving logica: vervang de foute afslag door de kortere weg
-  // Bijvoorbeeld: Links + U-turn + Rechts = Eigenlijk rechtdoor (S)
+  // Bijvoorbeeld: Links + U-turn + *rechts* = Eigenlijk rechtdoor (S) > wordt dit daadwerkelijk uitgevoerd door de code
+
   char totaal[3] = {pad[padLengte-3], pad[padLengte-2], pad[padLengte-1]};
   char vervanging = ' ';
 
@@ -261,7 +266,7 @@ void finishActie() {
   preferences.putBytes("pad", pad, 150);
   preferences.end();
   Serial.println("FINISH! Kaart opgeslagen.");
-  toonpad();
+  toonPad();
 }
 
 void rijden(int correctie) {
