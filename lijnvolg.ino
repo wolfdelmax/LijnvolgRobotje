@@ -157,11 +157,7 @@ void verwerkSplitsing() {
       draaiRechts();
     }
     optimaliseerPad(); // Direct opschonen als we een 'U' hebben toegevoegd
-<<<<<<< HEAD
-    toonpad();
-=======
     toonPad();
->>>>>>> 9f5124e85d31bb3fdc671862a4cffa97922d9907
   } else {
     // RACE MODUS: Volg de opgeslagen kaart
     char actie = pad[stapIndex++];
