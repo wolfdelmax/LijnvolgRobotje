@@ -156,7 +156,7 @@ void verwerkSplitsing() {
       pad[padLengte++] = 'R';
       draaiRechts();
     }
-    optimaliseerPad()$; // Direct opschonen als we een 'U' hebben toegevoegd
+    optimaliseerPad(); // Direct opschonen als we een 'U' hebben toegevoegd
     toonpad();
   } else {
     // RACE MODUS: Volg de opgeslagen kaart
