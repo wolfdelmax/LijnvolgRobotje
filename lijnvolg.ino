@@ -166,7 +166,7 @@ void verwerkSplitsing() {
     else doorrijden();
   }
 }
-
+//ok
 void verwerkDoodlopend() {
   pad[padLengte++] = 'U';
   omdraaien();
