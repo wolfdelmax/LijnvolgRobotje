@@ -1,7 +1,7 @@
 #include <QTRSensors.h>
 #include <Wire.h>
 #include <Adafruit_VL6180X.h>
-#include <Preferences.h> //slaat de kaart op
+#include <Preferences.h> // slaat de kaart op
 
 // --- COMPONENTEN ---
 QTRSensors qtr;
@@ -19,10 +19,9 @@ int snelheidMapping = 40;
 int snelheidRace = 80; 
 int baseSpeed;                     
 
-// --- PD INSTELLINGEN --- 
+// --- P INSTELLINGEN --- 
 float Kp = 0.05;     
-float Kd = 0.3;      
-int lastError = 0;   
+// Kd en lastError zijn verwijderd voor een pure P-regelaar
 
 // --- PATH SOLVING (DE KAART) ---
 char pad[150];       // Opslag voor afslagen: 'L', 'R', 'S'
@@ -35,7 +34,7 @@ int huidigePoging = 1;
 bool isFinished = false;
 unsigned long startTime = 0;
 unsigned long finishTimer = 0;
-const int vierkantDetectieTijd = 350; // Voor het 40x40cm zwarte vlak; deze naargelang snelheid moet nog worden verbeterd
+const int vierkantDetectieTijd = 350; // Voor het 40x40cm zwarte vlak
 
 void setup() {
   Serial.begin(115200);
@@ -81,12 +80,10 @@ void loop() {
   // 1. ToF Veiligheid (Object detectie)
   if (objectGedetecteerd()) {
     remmen();
-    // print output fixen
     return; 
   }
 
   // 2. Stop-vak detectie (Zwart 40x40cm)
-  // Negeer de eerste 4 sec voor de rand van het startvak, misschien minder?.
   if (millis() - startTime > 1500) {
     if (checkStopVak()) {
       finishActie();
@@ -107,14 +104,16 @@ void loop() {
        verwerkDoodlopend();
     }
   } 
-  // Standaard Lijnvolgen
+  // Standaard Lijnvolgen (Nu met pure P-regelaar)
   else {
     int error = (int)positie - 3500;
-    int correctie = berekenPD(error);
+    int correctie = berekenP(error);
     rijden(correctie);
+    
+    // 4. Visualisatie (voor de Serial Plotter)
+    // Verplaatst naar BINNEN de else, zodat error en correctie hier bestaan
+    plotGegevens(error, correctie);
   }
-  // 4. Visualisatie (voor de Serial Plotter)
-  plotGegevens(error, correctie);
 }
 
 // --- VISUALISATIE FUNCTIE ---
@@ -138,14 +137,12 @@ void toonPad() {
 // --- NAVIGATIE FUNCTIES ---
 
 void verwerkSplitsing() {
-  // Rij een klein stukje door om de sensoren boven het midden van het kruispunt te krijgen
   analogWrite(motorLinksPWM, baseSpeed);
   analogWrite(motorRechtsPWM, baseSpeed);
   delay(50); 
   qtr.readLineBlack(sensorValues);
 
   if (huidigePoging == 1) {
-    // MAPPING MODUS: Altijd links proberen (Left Hand Rule)
     if (sensorValues[0] > 700) {
       pad[padLengte++] = 'L';
       draaiLinks();
@@ -156,10 +153,9 @@ void verwerkSplitsing() {
       pad[padLengte++] = 'R';
       draaiRechts();
     }
-    optimaliseerPad(); // Direct opschonen als we een 'U' hebben toegevoegd
+    optimaliseerPad(); 
     toonPad();
   } else {
-    // RACE MODUS: Volg de opgeslagen kaart
     char actie = pad[stapIndex++];
     if (actie == 'L') draaiLinks();
     else if (actie == 'R') draaiRechts();
@@ -175,11 +171,7 @@ void verwerkDoodlopend() {
 }
 
 void optimaliseerPad() {
-  // Als we een U-turn hebben gemaakt, kunnen we het pad verkorten
   if (padLengte < 3 || pad[padLengte - 2] != 'U') return;
-
-  // Maze solving logica: vervang de foute afslag door de kortere weg
-  // Bijvoorbeeld: Links + U-turn + *rechts* = Eigenlijk rechtdoor (S) > wordt dit daadwerkelijk uitgevoerd door de code
 
   char totaal[3] = {pad[padLengte-3], pad[padLengte-2], pad[padLengte-1]};
   char vervanging = ' ';
@@ -220,7 +212,7 @@ void draaiRechts() {
 void omdraaien() {
   analogWrite(motorLinksPWM, baseSpeed);
   analogWrite(motorRechtsPWM, 0);
-  delay(500); // Draai ruim over de 90 graden heen
+  delay(500); 
   while (sensorValues[3] < 500 && sensorValues[4] < 500) {
     qtr.readLineBlack(sensorValues);
   }
@@ -229,7 +221,7 @@ void omdraaien() {
 void doorrijden() {
   analogWrite(motorLinksPWM, baseSpeed);
   analogWrite(motorRechtsPWM, baseSpeed);
-  delay(150); // Rij over de dwarslijn heen
+  delay(150); 
 }
 
 // --- HULPFUNCTIES ---
@@ -270,9 +262,9 @@ void rijden(int correctie) {
   analogWrite(motorRechtsPWM, constrain(baseSpeed - correctie, 0, 255));
 }
 
-int berekenPD(int error) {
-  int correctie = (error * Kp) + ((error - lastError) * Kd);
-  lastError = error;
+// Aangepast van berekenPD naar berekenP
+int berekenP(int error) {
+  int correctie = error * Kp;
   return correctie;
 }
 
@@ -281,10 +273,6 @@ bool objectGedetecteerd() {
 }
 
 void remmen() { analogWrite(motorLinksPWM, 0); analogWrite(motorRechtsPWM, 0); }
-
-void kalibreerRobot() {
-  for (uint16_t i = 0; i < 400; i++) qtr.calibrate();
-}
 
 void plotGegevens(int error, int correctie) {
   Serial.print("Error:");
@@ -295,7 +283,7 @@ void plotGegevens(int error, int correctie) {
   Serial.println(); 
 }
 
-// KALIBRATIE......................
+// --- KALIBRATIE ---
 
 void kalibreerRobot() {
   pinMode(2, OUTPUT); // Pin 2 is de ingebouwde LED op de meeste ESP32 boards
