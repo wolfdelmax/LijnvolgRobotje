@@ -34,6 +34,7 @@ Preferences preferences;
 // --- SENSOR PINNEN ---
 const uint8_t SensorCount = 8;
 uint16_t sensorValues[SensorCount];
+const uint8_t sensorPinnen[] = {18,19,3,1,23,14,12,13}
 
 // --- MOTOR PINNEN ---
 const int pinAIN1 = 4;  const int pinAIN2 = 2;  const int pinPWMA = 15; 
