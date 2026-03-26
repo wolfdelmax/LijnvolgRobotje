@@ -320,7 +320,129 @@ void kalibreerRobot() {
   delay(1000);
 }
 ```
+#include <QTRSensors.h>
+#include <Wire.h>
+#include <Adafruit_VL6180X.h>
+#include <Preferences.h> 
 
+// ==========================================
+// --- 🛠️ FINETUNING VARIABELEN 🛠️ ---
+// ==========================================
+float Kp = 0.05;
+int minSnelheid = 30;
+
+int draaiTijd90 = 200;
+int draaiTijd180 = 350;
+int doorrijTijd = 150;
+
+// --- OBJECT ONTWIJKING TIMING ---
+int ontwijkZijdelings = 300;  // Tijd om naast het object te rijden
+int ontwijkVooruit    = 400;  // Tijd om voorbij het object te rijden
+// ==========================================
+
+
+// --- SCHAKELAAR PIN ---
+const int pinModeSchakelaar = 27;
+
+
+// --- ENUMS VOOR STATUS ---
+enum RobotStatus { VOLGEN, DRAAIEN, DOORRIJDEN, STOP, ONTWIJKEN };
+RobotStatus huidigeStatus = VOLGEN;
+
+// --- ONTWIJKING STAPPENLIJST ---
+struct OntwijkStap { int links; int rechts; int duur; };
+OntwijkStap ontwijkStappen[5];  // Wordt gevuld in startOntwijken()
+int aantalOntwijkStappen = 5;
+int huidigeOntwijkStap = 0;
+
+// --- COMPONENTEN ---
+QTRSensors qtr;
+Adafruit_VL6180X vl = Adafruit_VL6180X();
+Preferences preferences;
+
+// --- SENSOR PINNEN ---
+const uint8_t SensorCount = 8;
+uint16_t sensorValues[SensorCount];
+const uint8_t sensorPinnen[] = {18, 19, 3, 1, 23, 14, 12, 13};
+
+// --- MOTOR PINNEN ---
+const int pinAIN1 = 4;  const int pinAIN2 = 2;  const int pinPWMA = 15; 
+const int pinBIN1 = 16; const int pinBIN2 = 17; const int pinPWMB = 5;  
+const int pwmFreq = 5000;
+const int pwmResolution = 8;
+
+// --- SNELHEID INSTELLINGEN ---
+int snelheidMapping = 40;
+int snelheidRace = 80; 
+int baseSpeed;
+
+// --- PATH SOLVING (DE KAART) ---
+char pad[150];       
+int padLengte = 0;
+int stapIndex = 0;   
+const int stopAfstand = 60;
+
+// --- TIMING & LOGICA ---
+unsigned long actieStartTijd = 0;
+unsigned long actieDuur = 0;
+int huidigePoging = 1;
+bool isFinished = false;
+unsigned long startTime = 0;
+unsigned long finishTimer = 0;
+const int vierkantDetectieTijd = 350; 
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin();
+
+  // 1. SCHAKELAAR
+  pinMode(pinModeSchakelaar, INPUT_PULLUP);
+  huidigePoging = (digitalRead(pinModeSchakelaar) == LOW) ? 2 : 1;
+
+  // 2. Geheugen laden
+  preferences.begin("robot-data", false);
+  padLengte = preferences.getInt("padLengte", 0);
+  if (padLengte > 0) preferences.getBytes("pad", pad, 150);
+
+  // 3. ToF Initialisatie
+  if (!vl.begin()) {
+    Serial.println("ToF Fout! Controleer bedrading.");
+    while (1); 
+  }
+
+  // 4. Snelheid instellen
+  int pct = (huidigePoging == 1) ? snelheidMapping : snelheidRace;
+  baseSpeed = (pct * 255) / 100;
+
+  // 5. Motoren instellen
+  pinMode(pinAIN1, OUTPUT); pinMode(pinAIN2, OUTPUT);
+  pinMode(pinBIN1, OUTPUT); pinMode(pinBIN2, OUTPUT);
+  ledcAttach(pinPWMA, pwmFreq, pwmResolution);            
+  ledcAttach(pinPWMB, pwmFreq, pwmResolution); 
+
+  // 6. Lijn sensoren instellen
+  qtr.setTypeRC(); 
+  qtr.setSensorPins(sensorPinnen, SensorCount);
+
+  kalibreerRobot();
+  
+  Serial.println("--- ROBOT STATUS ---");
+  Serial.println(huidigePoging == 1 ? "MODUS: MAPPING (schakelaar open)" : "MODUS: RACE (schakelaar gesloten)");
+  toonPad(); 
+  Serial.println("--------------------");
+
+  startTime = millis();
+}
+
+void loop() {
+  if (isFinished) return;
+
+  uint16_t positie = qtr.readLineBlack(sensorValues);
+
+  switch (huidigeStatus) {
+    
+    case VOLGEN:
+      // ToF check: object op pad -> start ontwi
 **Wiring for the switch:**
 ```
 GPIO 27 ──── [Switch] ──── GND
