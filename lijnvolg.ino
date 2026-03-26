@@ -18,9 +18,10 @@ int ontwijkZijdelings = 300;  // Tijd om naast het object te rijden
 int ontwijkVooruit    = 400;  // Tijd om voorbij het object te rijden
 // ==========================================
 
+// --- ToF -- 
 
 // --- SCHAKELAAR PIN ---
-const int pinModeSchakelaar = 27;
+const int pinModeSchakelaar = 33;
 
 
 // --- ENUMS VOOR STATUS ---
