@@ -5,15 +5,21 @@
 
 // ==========================================
 // --- 🛠️ FINETUNING VARIABELEN 🛠️ ---
-// Pas deze waarden aan tijdens het testen:
 // ==========================================
-float Kp = 0.05;              // Verhoog als hij bochten mist, verlaag als hij hevig waggelt (bijv. 0.04 of 0.06).
-int minSnelheid = 30;         // Verhoog (bijv. 40-50) om het binnenste wiel meer te laten rollen in flauwe bochten.
+float Kp = 0.05;
+int minSnelheid = 30;
 
-int draaiTijd90 = 200;        // Milliseconden "blind" wegdraaien bij een 90 graden bocht (Links/Rechts).
-int draaiTijd180 = 350;       // Milliseconden "blind" wegdraaien voor een U-turn (Doodlopend).
-int doorrijTijd = 150;        // Milliseconden "blind" rechtdoor rijden op een kruispunt.
+int draaiTijd90 = 200;
+int draaiTijd180 = 350;
+int doorrijTijd = 150;
 // ==========================================
+
+
+// --- SCHAKELAAR PIN ---
+// Sluit de schakelaar aan tussen GPIO 27 en GND.
+// Schakelaar OPEN  = Mapping modus (poging 1)
+// Schakelaar DICHT = Race modus    (poging 2)
+const int pinModeSchakelaar = 27;
 
 
 // --- ENUMS VOOR STATUS ---
@@ -29,7 +35,7 @@ Preferences preferences;
 const uint8_t SensorCount = 8;
 uint16_t sensorValues[SensorCount];
 
-// --- MOTOR PINNEN (ESP32 Core 3.0+) ---
+// --- MOTOR PINNEN ---
 const int pinAIN1 = 4;  const int pinAIN2 = 2;  const int pinPWMA = 15; 
 const int pinBIN1 = 16; const int pinBIN2 = 17; const int pinPWMB = 5;  
 const int pwmFreq = 5000;
@@ -49,7 +55,7 @@ const int stopAfstand = 60;
 // --- TIMING & LOGICA ---
 unsigned long actieStartTijd = 0;
 unsigned long actieDuur = 0;
-int huidigePoging = 1; 
+int huidigePoging = 1; // 1 = Mapping, 2 = Race
 bool isFinished = false;
 unsigned long startTime = 0;
 unsigned long finishTimer = 0;
@@ -58,37 +64,49 @@ const int vierkantDetectieTijd = 350;
 void setup() {
   Serial.begin(115200);
   Wire.begin();
-  
-  // 1. Geheugen laden
+
+  // 1. SCHAKELAAR: bepaal de modus bij het opstarten
+  pinMode(pinModeSchakelaar, INPUT_PULLUP);
+  // INPUT_PULLUP: pin is HIGH als schakelaar open is, LOW als gesloten (naar GND)
+  if (digitalRead(pinModeSchakelaar) == LOW) {
+    huidigePoging = 2; // Schakelaar DICHT -> Race modus
+  } else {
+    huidigePoging = 1; // Schakelaar OPEN  -> Mapping modus
+  }
+
+  // 2. Geheugen laden (pad van vorige mapping run)
   preferences.begin("robot-data", false);
-  huidigePoging = preferences.getInt("poging", 1);
   padLengte = preferences.getInt("padLengte", 0);
   if (padLengte > 0) preferences.getBytes("pad", pad, 150);
 
-  // 2. ToF Initialisatie
+  // 3. ToF Initialisatie
   if (!vl.begin()) {
     Serial.println("ToF Fout! Controleer bedrading.");
     while (1); 
   }
 
-  // 3. Snelheid instellen
+  // 4. Snelheid instellen op basis van modus
   int pct = (huidigePoging == 1) ? snelheidMapping : snelheidRace;
   baseSpeed = (pct * 255) / 100;
 
-  // 4. Motoren Instellen
+  // 5. Motoren Instellen
   pinMode(pinAIN1, OUTPUT); pinMode(pinAIN2, OUTPUT);
   pinMode(pinBIN1, OUTPUT); pinMode(pinBIN2, OUTPUT);
   ledcAttach(pinPWMA, pwmFreq, pwmResolution);            
   ledcAttach(pinPWMB, pwmFreq, pwmResolution); 
 
-  // 5. Lijn sensoren instellen
+  // 6. Lijn sensoren instellen
   qtr.setTypeRC(); 
   qtr.setSensorPins((const uint8_t[]){32, 33, 34, 35, 36, 39, 25, 26}, SensorCount);
 
   kalibreerRobot();
   
   Serial.println("--- ROBOT STATUS ---");
-  Serial.print("POGING: "); Serial.println(huidigePoging);
+  if (huidigePoging == 1) {
+    Serial.println("MODUS: MAPPING (schakelaar open)");
+  } else {
+    Serial.println("MODUS: RACE (schakelaar gesloten)");
+  }
   toonPad(); 
   Serial.println("--------------------");
 
@@ -98,7 +116,7 @@ void setup() {
 void loop() {
   if (isFinished) return;
 
-  // 1. VEILIGHEID: ToF wordt nu ALTIJD gecheckt, zonder vertraging
+  // 1. VEILIGHEID: ToF wordt altijd gecheckt
   if (objectGedetecteerd()) {
     remmen();
     return; 
@@ -107,25 +125,21 @@ void loop() {
   // 2. SENSOREN UITLEZEN
   uint16_t positie = qtr.readLineBlack(sensorValues);
 
-  // 3. STATE MACHINE: Wat is de robot aan het doen?
+  // 3. STATE MACHINE
   switch (huidigeStatus) {
     
     case VOLGEN:
-      // Check voor finishvak (pas mogelijk na 1.5s om direct stoppen op startvak te voorkomen)
       if (millis() - startTime > 1500 && checkStopVak()) {
         finishActie();
         return;
       }
 
-      // Detecteer kruispunten/splitsingen (Buitenste sensoren zien zwart)
       if (sensorValues[0] > 700 && sensorValues[7] > 700) {
         startVerwerkSplitsing();
       } 
-      // Detecteer doodlopend pad (Geen enkele sensor ziet zwart)
       else if (isDoodlopend() && huidigePoging == 1) {
         startOmdraaien();
       } 
-      // Normaal lijnvolgen
       else {
         int error = (int)positie - 3500;
         rijden(berekenP(error));
@@ -133,17 +147,14 @@ void loop() {
       break;
 
     case DRAAIEN:
-      // Negeer sensoren totdat de 'blinde tijd' voorbij is
       if (millis() - actieStartTijd > actieDuur) {
-        // Blinde tijd is voorbij, zoek nu naar de nieuwe lijn met middelste sensoren
         if (sensorValues[3] > 500 || sensorValues[4] > 500) {
-          huidigeStatus = VOLGEN; // Lijn gevonden, ga terug naar lijnvolgen
+          huidigeStatus = VOLGEN;
         }
       }
       break;
 
     case DOORRIJDEN:
-      // Rijdt blind rechtdoor over een kruispunt
       if (millis() - actieStartTijd > actieDuur) {
         huidigeStatus = VOLGEN;
       }
@@ -167,7 +178,7 @@ void setMotorRechts(int speed) {
   else { digitalWrite(pinBIN1, LOW); digitalWrite(pinBIN2, LOW); ledcWrite(pinPWMB, 0); }
 }
 
-// --- NON-BLOCKING BEWEGINGS ACTIES ---
+// --- BEWEGINGS ACTIES ---
 
 void rijden(int correctie) {
   setMotorLinks(constrain(baseSpeed + correctie, minSnelheid, 255));
@@ -193,7 +204,7 @@ void startDraaiRechts() {
 void startOmdraaien() {
   pad[padLengte++] = 'U';
   setMotorLinks(baseSpeed);
-  setMotorRechts(-baseSpeed); // Achteruit trekken voor scherpe U-turn
+  setMotorRechts(-baseSpeed);
   actieStartTijd = millis();
   actieDuur = draaiTijd180;
   huidigeStatus = DRAAIEN;
@@ -213,7 +224,6 @@ void startDoorrijden() {
 
 void startVerwerkSplitsing() {
   if (huidigePoging == 1) {
-    // Lees direct sensoren opnieuw om type kruising te bepalen
     qtr.readLineBlack(sensorValues);
 
     if (sensorValues[0] > 700) { pad[padLengte++] = 'L'; startDraaiLinks(); } 
@@ -223,7 +233,6 @@ void startVerwerkSplitsing() {
     optimaliseerPad(); 
     toonPad();
   } else {
-    // Race mode: volg het opgeslagen pad
     char actie = pad[stapIndex++];
     if (actie == 'L') startDraaiLinks();
     else if (actie == 'R') startDraaiRechts();
@@ -271,13 +280,17 @@ bool checkStopVak() {
 void finishActie() {
   remmen();
   isFinished = true;
-  int volgende = huidigePoging + 1;
-  if (volgende > 2) volgende = 1; // 1 = Map run, 2 = Fast run
-  preferences.putInt("poging", volgende);
-  preferences.putInt("padLengte", padLengte);
-  preferences.putBytes("pad", pad, 150);
+
+  // Sla het pad altijd op bij het finishen van een mapping run
+  if (huidigePoging == 1) {
+    preferences.putInt("padLengte", padLengte);
+    preferences.putBytes("pad", pad, 150);
+    Serial.println("FINISH! Pad opgeslagen. Zet schakelaar om voor race modus.");
+  } else {
+    Serial.println("FINISH! Race voltooid.");
+  }
+
   preferences.end();
-  Serial.println("FINISH! Gegevens opgeslagen.");
   toonPad();
 }
 
@@ -303,5 +316,10 @@ void kalibreerRobot() {
   for (uint16_t i = 0; i < 400; i++) qtr.calibrate();
   digitalWrite(2, LOW); 
   Serial.println("KALIBRATIE KLAAR!");
-  delay(1000); // Korte pauze voor je de robot loslaat
+  delay(1000);
 }
+```
+
+**Wiring for the switch:**
+```
+GPIO 27 ──── [Switch] ──── GND
