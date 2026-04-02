@@ -6,23 +6,22 @@
 // ==========================================
 // --- 🛠️ FINETUNING VARIABELEN 🛠️ ---
 // ==========================================
-float Kp = 0.05;
-int minSnelheid = 30;
+float Kp = 0.1;
+float Kd = 0.007;
+int lastError = 0;
+int lastRichting = 0;
 
 int draaiTijd90 = 200;
 int draaiTijd180 = 350;
 int doorrijTijd = 150;
 
 // --- OBJECT ONTWIJKING TIMING ---
-int ontwijkZijdelings = 300;  // Tijd om naast het object te rijden
-int ontwijkVooruit    = 400;  // Tijd om voorbij het object te rijden
+int ontwijkZijdelings = 300;
+int ontwijkVooruit    = 400;
 // ==========================================
 
-// --- ToF -- 
-
 // --- SCHAKELAAR PIN ---
-const int pinModeSchakelaar = 33;
-
+const int pinModeSchakelaar = 1;
 
 // --- ENUMS VOOR STATUS ---
 enum RobotStatus { VOLGEN, DRAAIEN, DOORRIJDEN, STOP, ONTWIJKEN };
@@ -30,7 +29,7 @@ RobotStatus huidigeStatus = VOLGEN;
 
 // --- ONTWIJKING STAPPENLIJST ---
 struct OntwijkStap { int links; int rechts; int duur; };
-OntwijkStap ontwijkStappen[5];  // Wordt gevuld in startOntwijken()
+OntwijkStap ontwijkStappen[5];
 int aantalOntwijkStappen = 5;
 int huidigeOntwijkStap = 0;
 
@@ -42,11 +41,11 @@ Preferences preferences;
 // --- SENSOR PINNEN ---
 const uint8_t SensorCount = 8;
 uint16_t sensorValues[SensorCount];
-const uint8_t sensorPinnen[] = {18, 19, 3, 1, 23, 14, 12, 13};
+const uint8_t sensorPinnen[] = {23, 15, 32, 27, 26, 14, 12, 13};
 
 // --- MOTOR PINNEN ---
-const int pinAIN1 = 4;  const int pinAIN2 = 2;  const int pinPWMA = 15; 
-const int pinBIN1 = 16; const int pinBIN2 = 17; const int pinPWMB = 5;  
+const int pinAIN1 = 16; const int pinAIN2 = 4;  const int pinPWMA = 18; 
+const int pinBIN1 = 17; const int pinBIN2 = 5;  const int pinPWMB = 19;  
 const int pwmFreq = 5000;
 const int pwmResolution = 8;
 
@@ -54,8 +53,9 @@ const int pwmResolution = 8;
 int snelheidMapping = 40;
 int snelheidRace = 80; 
 int baseSpeed;
+int minBochSpeed = 60;
 
-// --- PATH SOLVING (DE KAART) ---
+// --- PATH SOLVING ---
 char pad[150];       
 int padLengte = 0;
 int stapIndex = 0;   
@@ -118,10 +118,18 @@ void loop() {
 
   uint16_t positie = qtr.readLineBlack(sensorValues);
 
+  // Controleer of alle sensoren wit zien
+  bool alleWit = true;
+  for (int i = 0; i < SensorCount; i++) {
+    if (sensorValues[i] > 200) {
+      alleWit = false;
+      break;
+    }
+  }
+
   switch (huidigeStatus) {
     
     case VOLGEN:
-      // ToF check: object op pad -> start ontwijking
       if (objectGedetecteerd()) {
         startOntwijken();
         return;
@@ -139,8 +147,21 @@ void loop() {
         startOmdraaien();
       } 
       else {
-        int error = (int)positie - 3500;
-        rijden(berekenP(error));
+        int error;
+        if (alleWit) {
+          error = lastRichting > 0 ? 3500 : -3500;
+        } else {
+          error = (int)positie - 3500;
+          lastRichting = error;
+        }
+
+        // Dynamische snelheid
+        float dynamischeSnelheid = baseSpeed - (abs(error) * 0.025);
+        dynamischeSnelheid = constrain(dynamischeSnelheid, minBochSpeed, baseSpeed);
+
+        int correctie = (error * Kp) + ((error - lastError) * Kd);
+        lastError = error;
+        rijden((int)dynamischeSnelheid, correctie);
       }
       break;
 
@@ -159,11 +180,9 @@ void loop() {
       break;
 
     case ONTWIJKEN:
-      // Laatste stap: zoek de lijn op sensor in plaats van timer
       if (huidigeOntwijkStap == aantalOntwijkStappen) {
         setMotorLinks(baseSpeed);
         setMotorRechts(baseSpeed);
-        // Wacht tot een middelste sensor de lijn ziet
         if (sensorValues[2] > 500 || sensorValues[3] > 500 ||
             sensorValues[4] > 500 || sensorValues[5] > 500) {
           Serial.println("ONTWIJKEN: Lijn gevonden, terug naar VOLGEN.");
@@ -172,18 +191,14 @@ void loop() {
         return;
       }
 
-      // Timer van huidige stap voorbij -> volgende stap
       if (millis() - actieStartTijd > ontwijkStappen[huidigeOntwijkStap].duur) {
         huidigeOntwijkStap++;
-
         if (huidigeOntwijkStap < aantalOntwijkStappen) {
-          // Start volgende stap
           setMotorLinks(ontwijkStappen[huidigeOntwijkStap].links);
           setMotorRechts(ontwijkStappen[huidigeOntwijkStap].rechts);
           actieStartTijd = millis();
           Serial.print("ONTWIJKEN: Stap "); Serial.println(huidigeOntwijkStap + 1);
         }
-        // Als huidigeOntwijkStap == aantalOntwijkStappen -> volgende loop doet lijn zoeken
       }
       break;
 
@@ -194,23 +209,14 @@ void loop() {
 }
 
 // --- ONTWIJKING STARTEN ---
-
 void startOntwijken() {
   Serial.println("OBJECT GEDETECTEERD! Start ontwijking links.");
   remmen();
-
-  // Vul de stappenlijst (baseSpeed is hier al bekend)
-  // Stap 0: draai 90° links
   ontwijkStappen[0] = { -baseSpeed,  baseSpeed, draaiTijd90      };
-  // Stap 1: rijd zijdelings langs het object
   ontwijkStappen[1] = {  baseSpeed,  baseSpeed, ontwijkZijdelings};
-  // Stap 2: draai 90° rechts (nu parallel aan origineel pad)
   ontwijkStappen[2] = {  baseSpeed, -baseSpeed, draaiTijd90      };
-  // Stap 3: rijd vooruit voorbij het object
   ontwijkStappen[3] = {  baseSpeed,  baseSpeed, ontwijkVooruit   };
-  // Stap 4: draai 90° rechts (nu richting de lijn)
   ontwijkStappen[4] = {  baseSpeed, -baseSpeed, draaiTijd90      };
-
   huidigeOntwijkStap = 0;
   setMotorLinks(ontwijkStappen[0].links);
   setMotorRechts(ontwijkStappen[0].rechts);
@@ -220,7 +226,6 @@ void startOntwijken() {
 }
 
 // --- MOTOR AANSTURING ---
-
 void setMotorLinks(int speed) {
   speed = constrain(speed, -255, 255); 
   if (speed > 0) { digitalWrite(pinAIN1, HIGH); digitalWrite(pinAIN2, LOW);  ledcWrite(pinPWMA, speed);  }
@@ -236,10 +241,9 @@ void setMotorRechts(int speed) {
 }
 
 // --- BEWEGINGS ACTIES ---
-
-void rijden(int correctie) {
-  setMotorLinks(constrain(baseSpeed + correctie, minSnelheid, 255));
-  setMotorRechts(constrain(baseSpeed - correctie, minSnelheid, 255));
+void rijden(int snelheid, int correctie) {
+  setMotorLinks(constrain(snelheid + correctie, -255, 255));
+  setMotorRechts(constrain(snelheid - correctie, -255, 255));
 }
 
 void startDraaiLinks() {
@@ -278,13 +282,12 @@ void startDoorrijden() {
 }
 
 // --- NAVIGATIE LOGICA ---
-
 void startVerwerkSplitsing() {
   if (huidigePoging == 1) {
     qtr.readLineBlack(sensorValues);
-    if (sensorValues[0] > 700)                            { pad[padLengte++] = 'L'; startDraaiLinks();  } 
-    else if (sensorValues[3] > 700 || sensorValues[4] > 700) { pad[padLengte++] = 'S'; startDoorrijden(); } 
-    else                                                  { pad[padLengte++] = 'R'; startDraaiRechts(); }
+    if (sensorValues[0] > 700)                                { pad[padLengte++] = 'L'; startDraaiLinks();  } 
+    else if (sensorValues[3] > 700 || sensorValues[4] > 700)  { pad[padLengte++] = 'S'; startDoorrijden(); } 
+    else                                                       { pad[padLengte++] = 'R'; startDraaiRechts(); }
     optimaliseerPad(); 
     toonPad();
   } else {
