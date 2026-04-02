@@ -1,6 +1,6 @@
 #include <QTRSensors.h>
 #include <Wire.h>
-#include <Adafruit_VL6180X.h>
+// #include <Adafruit_VL6180X.h>  // UITGESCHAKELD VOOR TESTEN
 #include <Preferences.h> 
 
 // ==========================================
@@ -9,7 +9,6 @@
 float Kp = 0.1;
 float Kd = 0.007;
 int lastError = 0;
-int lastRichting = 0;
 
 int draaiTijd90 = 200;
 int draaiTijd180 = 350;
@@ -18,6 +17,10 @@ int doorrijTijd = 150;
 // --- OBJECT ONTWIJKING TIMING ---
 int ontwijkZijdelings = 300;
 int ontwijkVooruit    = 400;
+// --- SNELHEID INSTELLINGEN (in procenten) ---
+int snelheidMapping   = 40;
+int snelheidRace      = 80;
+int minBochSnelheid   = 25;
 // ==========================================
 
 // --- SCHAKELAAR PIN ---
@@ -35,7 +38,7 @@ int huidigeOntwijkStap = 0;
 
 // --- COMPONENTEN ---
 QTRSensors qtr;
-Adafruit_VL6180X vl = Adafruit_VL6180X();
+// Adafruit_VL6180X vl = Adafruit_VL6180X();  // UITGESCHAKELD VOOR TESTEN
 Preferences preferences;
 
 // --- SENSOR PINNEN ---
@@ -49,14 +52,13 @@ const int pinBIN1 = 17; const int pinBIN2 = 5;  const int pinPWMB = 19;
 const int pwmFreq = 5000;
 const int pwmResolution = 8;
 
-// --- SNELHEID INSTELLINGEN ---
-int snelheidMapping = 40;
-int snelheidRace = 80; 
+// --- BEREKENDE SNELHEDEN ---
 int baseSpeed;
-int minBochSpeed = 60;
+int minBochSpeed;
 
 // --- PATH SOLVING ---
-char pad[150];       
+const int MAX_PAD_LENGTE = 150;
+char pad[MAX_PAD_LENGTE];       
 int padLengte = 0;
 int stapIndex = 0;   
 const int stopAfstand = 60;
@@ -64,6 +66,9 @@ const int stopAfstand = 60;
 // --- TIMING & LOGICA ---
 unsigned long actieStartTijd = 0;
 unsigned long actieDuur = 0;
+unsigned long laatsteObjectCheck = 0;
+bool lijnVerlaten = false;
+const unsigned long draaiTimeout = 1500;
 int huidigePoging = 1;
 bool isFinished = false;
 unsigned long startTime = 0;
@@ -81,17 +86,29 @@ void setup() {
   // 2. Geheugen laden
   preferences.begin("robot-data", false);
   padLengte = preferences.getInt("padLengte", 0);
-  if (padLengte > 0) preferences.getBytes("pad", pad, 150);
-
-  // 3. ToF Initialisatie
-  if (!vl.begin()) {
-    Serial.println("ToF Fout! Controleer bedrading.");
-    while (1); 
+  if (padLengte > 0 && padLengte <= MAX_PAD_LENGTE) {
+    preferences.getBytes("pad", pad, MAX_PAD_LENGTE);
+  } else {
+    padLengte = 0; // FIX: Reset als ongeldige waarde in geheugen
   }
 
-  // 4. Snelheid instellen
+  // FIX: Controleer of er een geldig pad is voor race-modus
+  if (huidigePoging == 2 && padLengte == 0) {
+    Serial.println("FOUT: Geen geldig pad gevonden voor race-modus!");
+    Serial.println("Doe eerst een mapping-run (schakelaar open).");
+    while (1) delay(1000);
+  }
+
+  // 3. ToF Initialisatie - UITGESCHAKELD VOOR TESTEN
+  // if (!vl.begin()) {
+  //   Serial.println("ToF Fout! Controleer bedrading.");
+  //   while (1);
+  // }
+
+  // 4. Snelheid berekenen
   int pct = (huidigePoging == 1) ? snelheidMapping : snelheidRace;
-  baseSpeed = (pct * 255) / 100;
+  baseSpeed    = (pct * 255) / 100;
+  minBochSpeed = (minBochSnelheid * 255) / 100;
 
   // 5. Motoren instellen
   pinMode(pinAIN1, OUTPUT); pinMode(pinAIN2, OUTPUT);
@@ -118,22 +135,17 @@ void loop() {
 
   uint16_t positie = qtr.readLineBlack(sensorValues);
 
-  // Controleer of alle sensoren wit zien
-  bool alleWit = true;
-  for (int i = 0; i < SensorCount; i++) {
-    if (sensorValues[i] > 200) {
-      alleWit = false;
-      break;
-    }
-  }
-
   switch (huidigeStatus) {
     
     case VOLGEN:
-      if (objectGedetecteerd()) {
-        startOntwijken();
-        return;
-      }
+      // UITGESCHAKELD VOOR TESTEN
+      // if (millis() - laatsteObjectCheck > 100) {
+      //   laatsteObjectCheck = millis();
+      //   if (objectGedetecteerd()) {
+      //     startOntwijken();
+      //     return;
+      //   }
+      // }
 
       if (millis() - startTime > 1500 && checkStopVak()) {
         finishActie();
@@ -147,18 +159,9 @@ void loop() {
         startOmdraaien();
       } 
       else {
-        int error;
-        if (alleWit) {
-          error = lastRichting > 0 ? 3500 : -3500;
-        } else {
-          error = (int)positie - 3500;
-          lastRichting = error;
-        }
-
-        // Dynamische snelheid
+        int error = (int)positie - 3500;
         float dynamischeSnelheid = baseSpeed - (abs(error) * 0.025);
         dynamischeSnelheid = constrain(dynamischeSnelheid, minBochSpeed, baseSpeed);
-
         int correctie = (error * Kp) + ((error - lastError) * Kd);
         lastError = error;
         rijden((int)dynamischeSnelheid, correctie);
@@ -166,10 +169,16 @@ void loop() {
       break;
 
     case DRAAIEN:
-      if (millis() - actieStartTijd > actieDuur) {
-        if (sensorValues[3] > 500 || sensorValues[4] > 500) {
-          huidigeStatus = VOLGEN;
+      qtr.readLineBlack(sensorValues);
+      if (!lijnVerlaten) {
+        if (sensorValues[3] < 300 && sensorValues[4] < 300) {
+          lijnVerlaten = true;
         }
+      } else if (sensorValues[3] > 500 || sensorValues[4] > 500) {
+        huidigeStatus = VOLGEN;
+      }
+      if (millis() - actieStartTijd > draaiTimeout) {
+        huidigeStatus = VOLGEN;
       }
       break;
 
@@ -180,7 +189,10 @@ void loop() {
       break;
 
     case ONTWIJKEN:
-      if (huidigeOntwijkStap == aantalOntwijkStappen) {
+      // FIX: Lees sensoren opnieuw voor lijndetectie
+      qtr.readLineBlack(sensorValues);
+
+      if (huidigeOntwijkStap >= aantalOntwijkStappen) {
         setMotorLinks(baseSpeed);
         setMotorRechts(baseSpeed);
         if (sensorValues[2] > 500 || sensorValues[3] > 500 ||
@@ -247,27 +259,34 @@ void rijden(int snelheid, int correctie) {
 }
 
 void startDraaiLinks() {
-  setMotorLinks(0);
+  setMotorLinks(-baseSpeed);
   setMotorRechts(baseSpeed);
   actieStartTijd = millis();
-  actieDuur = draaiTijd90; 
+  lijnVerlaten = false;
   huidigeStatus = DRAAIEN;
 }
 
 void startDraaiRechts() {
   setMotorLinks(baseSpeed);
-  setMotorRechts(0);
+  setMotorRechts(-baseSpeed);
   actieStartTijd = millis();
-  actieDuur = draaiTijd90;
+  lijnVerlaten = false;
   huidigeStatus = DRAAIEN;
 }
 
 void startOmdraaien() {
-  pad[padLengte++] = 'U';
+  if (padLengte < MAX_PAD_LENGTE) {  // FIX: Bounds check
+    pad[padLengte++] = 'U';
+  } else {
+    Serial.println("FOUT: Pad array vol!");
+    remmen();
+    isFinished = true;
+    return;
+  }
   setMotorLinks(baseSpeed);
   setMotorRechts(-baseSpeed);
   actieStartTijd = millis();
-  actieDuur = draaiTijd180;
+  lijnVerlaten = false;
   huidigeStatus = DRAAIEN;
   optimaliseerPad();
   toonPad();
@@ -285,16 +304,36 @@ void startDoorrijden() {
 void startVerwerkSplitsing() {
   if (huidigePoging == 1) {
     qtr.readLineBlack(sensorValues);
-    if (sensorValues[0] > 700)                                { pad[padLengte++] = 'L'; startDraaiLinks();  } 
-    else if (sensorValues[3] > 700 || sensorValues[4] > 700)  { pad[padLengte++] = 'S'; startDoorrijden(); } 
-    else                                                       { pad[padLengte++] = 'R'; startDraaiRechts(); }
-    optimaliseerPad(); 
+
+    bool linksOpen  = (sensorValues[0] > 700 || sensorValues[1] > 700);
+    bool rechtsOpen = (sensorValues[6] > 700 || sensorValues[7] > 700);
+    bool rechtdoor  = (sensorValues[3] > 700 || sensorValues[4] > 700);
+
+    if (padLengte < MAX_PAD_LENGTE) {
+      if (linksOpen)       { pad[padLengte++] = 'L'; startDraaiLinks();   }
+      else if (rechtdoor)  { pad[padLengte++] = 'S'; startDoorrijden();   }
+      else if (rechtsOpen) { pad[padLengte++] = 'R'; startDraaiRechts();  }
+      else                 { startOmdraaien(); return; }
+    } else {
+      Serial.println("FOUT: Pad array vol!");
+      remmen();
+      isFinished = true;
+      return;
+    }
+
+    optimaliseerPad();
     toonPad();
   } else {
-    char actie = pad[stapIndex++];
-    if (actie == 'L') startDraaiLinks();
-    else if (actie == 'R') startDraaiRechts();
-    else startDoorrijden();
+    // Race-modus: volg opgeslagen pad
+    if (stapIndex < padLengte) {  // FIX: Bounds check
+      char actie = pad[stapIndex++];
+      if (actie == 'L') startDraaiLinks();
+      else if (actie == 'R') startDraaiRechts();
+      else startDoorrijden();
+    } else {
+      Serial.println("FOUT: Pad index buiten bereik!");
+      startDoorrijden();
+    }
   }
 }
 
@@ -327,7 +366,9 @@ bool checkStopVak() {
   if (zwart >= 7) {
     if (finishTimer == 0) finishTimer = millis();
     if (millis() - finishTimer > vierkantDetectieTijd) return true;
-  } else finishTimer = 0; 
+  } else {
+    finishTimer = 0; 
+  }
   return false;
 }
 
@@ -336,7 +377,7 @@ void finishActie() {
   isFinished = true;
   if (huidigePoging == 1) {
     preferences.putInt("padLengte", padLengte);
-    preferences.putBytes("pad", pad, 150);
+    preferences.putBytes("pad", pad, MAX_PAD_LENGTE);
     Serial.println("FINISH! Pad opgeslagen. Zet schakelaar om voor race modus.");
   } else {
     Serial.println("FINISH! Race voltooid.");
@@ -345,11 +386,12 @@ void finishActie() {
   toonPad();
 }
 
-int berekenP(int error) { return error * Kp; }
-
-bool objectGedetecteerd() { 
-  return (vl.readRangeStatus() == VL6180X_ERROR_NONE && vl.readRange() < stopAfstand); 
-}
+// UITGESCHAKELD VOOR TESTEN
+// bool objectGedetecteerd() {
+//   uint8_t range = vl.readRange();
+//   uint8_t status = vl.readRangeStatus();
+//   return (status == VL6180X_ERROR_NONE && range < stopAfstand);
+// }
 
 void toonPad() { 
   Serial.print("Huidig pad: ");
@@ -360,6 +402,7 @@ void toonPad() {
 void kalibreerRobot() {
   pinMode(2, OUTPUT); digitalWrite(2, HIGH); 
   Serial.println("KALIBRATIE GESTART...");
+  // TIP: Beweeg de robot handmatig heen en weer over de lijn
   for (uint16_t i = 0; i < 400; i++) qtr.calibrate();
   digitalWrite(2, LOW); 
   Serial.println("KALIBRATIE KLAAR!");
