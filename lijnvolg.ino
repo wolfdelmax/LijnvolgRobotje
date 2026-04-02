@@ -11,7 +11,6 @@ float Kd = 0.007;
 int lastError = 0;
 
 int draaiTijd90 = 200;
-int draaiTijd180 = 350;
 int doorrijTijd = 150;
 
 // --- OBJECT ONTWIJKING TIMING ---
