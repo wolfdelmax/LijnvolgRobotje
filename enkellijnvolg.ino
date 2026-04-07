@@ -7,6 +7,7 @@ float Kp = 0.8;
 float Kd = 1.5;           // Dempt het slingeren
 int snelheid = 35;
 const int drempelRotatie = 15; // Hoeveel ticks verschil voordat we de 'sweep' filteren
+const int kalibratieSnelheid = 80; // PWM snelheid tijdens kalibratie
 
 // ==========================================
 // --- PIN DEFINITIES ---
@@ -48,7 +49,7 @@ uint16_t berekenPositie(uint16_t *vals, uint8_t count) {
     gewogen += (uint32_t)vals[i] * i * 1000;
     totaal += vals[i];
   }
-  if (totaal == 0) return 3500; // Geen lijn gezien, geef midden terug
+  if (totaal == 0) return 3500;
   return gewogen / totaal;
 }
 
@@ -73,7 +74,9 @@ void setup() {
   qtr.setTypeRC();
   qtr.setSensorPins(sensorPinnen, SensorCount);
   
+  Serial.println("Kalibratie begint...");
   kalibreer();
+  stopMotoren();
   Serial.println("Klaar! Zet schakelaar LAAG om te rijden.");
 }
 
@@ -86,7 +89,7 @@ void loop() {
   // 1. Bereken de fysieke rotatie via encoders
   long diffL = countsL - lastCountsL;
   long diffR = countsR - lastCountsR;
-  long rotationDelta = diffL - diffR; // Positief = Rechtsom draaien
+  long rotationDelta = diffL - diffR;
   
   lastCountsL = countsL;
   lastCountsR = countsR;
@@ -95,7 +98,6 @@ void loop() {
   uint16_t position = qtr.readLineBlack(sensorValues);
 
   // 3. GEOMETRISCHE VALIDATIE (De Sweep-Filter)
-  // Als de encoders bevestigen dat we hard RECHTS draaien, negeer de LINKER sensoren
   if (rotationDelta > drempelRotatie) {
     bool lineInMiddle = (sensorValues[3] > 600 || sensorValues[4] > 600);
     if (!lineInMiddle) {
@@ -103,7 +105,6 @@ void loop() {
       position = berekenPositie(sensorValues, SensorCount);
     }
   } 
-  // Als we hard LINKS draaien, negeer de RECHTER sensoren
   else if (rotationDelta < -drempelRotatie) {
     bool lineInMiddle = (sensorValues[3] > 600 || sensorValues[4] > 600);
     if (!lineInMiddle) {
@@ -143,8 +144,19 @@ void stopMotoren() {
 }
 
 void kalibreer() {
+  // Draai heen en weer over de lijn zodat alle sensoren zwart én wit zien
   for (uint16_t i = 0; i < 400; i++) {
+    if (i < 100) {
+      // Draai naar links
+      stuurMotoren(-kalibratieSnelheid, kalibratieSnelheid);
+    } else if (i < 300) {
+      // Draai naar rechts
+      stuurMotoren(kalibratieSnelheid, -kalibratieSnelheid);
+    } else {
+      // Draai terug naar midden
+      stuurMotoren(-kalibratieSnelheid, kalibratieSnelheid);
+    }
     qtr.calibrate();
-    // Optioneel: laat de robot langzaam draaien tijdens kalibratie
   }
+  stopMotoren();
 }
