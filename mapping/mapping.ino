@@ -14,8 +14,8 @@ int minBochSnelheid   = 25;
 int kalibratieSnelheid = 30;
 
 // --- ENCODER AFSTANDEN ---
-int doorrijTicks = 45;       // afstand "doorrijden tot wielen op draaipunt staan"
-int eindvlakTicks = 150;     // ~10 cm continu zwart → eindvlak bevestigd
+int doorrijTicks = 200;      // ~13 cm: tot de wielas bij de splitsing is
+int eindvlakTicks = 280;     // ~18,5 cm continu zwart → eindvlak bevestigd
 
 // ==========================================
 
@@ -57,7 +57,7 @@ char pad[MAX_PAD_LENGTE];
 int padLengte = 0;
 
 // --- STATUS ---
-enum RobotStatus { VOLGEN, NAAR_KRUISPUNT, DRAAIEN, DOORRIJDEN, STOP };
+enum RobotStatus { VOLGEN, NAAR_KRUISPUNT, DRAAIEN, DOORRIJDEN, DOORRIJDEN_UTURN, STOP };
 RobotStatus huidigeStatus = VOLGEN;
 
 // --- BEREKENDE SNELHEDEN ---
@@ -186,7 +186,9 @@ void loop() {
 
       // --- Doodlopend ---
       if (isDoodlopend()) {
-        startOmdraaien();
+        encoderTellerL = 0;
+        encoderTellerR = 0;
+        huidigeStatus = DOORRIJDEN_UTURN; // Ga nu eerst doorrijden in plaats van direct draaien
         break;
       }
 
@@ -228,7 +230,7 @@ void loop() {
         break;
       }
 
-      // 3. Geen eindvlak: wacht tot wielen op draaipunt staan
+      // 3. Geen eindvlak: wacht tot wielas op splitsing staat
       if (gemTicks < doorrijTicks) {
         setMotorLinks(baseSpeed);
         setMotorRechts(baseSpeed);
@@ -285,6 +287,17 @@ void loop() {
       }
       break;
 
+    case DOORRIJDEN_UTURN:
+      // Laat de motoren vooruit draaien tijdens de extra afstand
+      setMotorLinks(baseSpeed);
+      setMotorRechts(baseSpeed);
+
+      // Controleer of de robot de doorrijTicks heeft gehaald
+      if ((encoderTellerL + encoderTellerR) / 2 >= doorrijTicks) {
+        startOmdraaien(); // Zet de U-turn in
+      }
+      break;
+
     case STOP:
       remmen();
       break;
@@ -333,7 +346,7 @@ void startOmdraaien() {
     logEventEntry('U', 0);
   }
   setMotorLinks(baseSpeed);
-  setMotorRechts(-baseSpeed);
+  setMotorRechts(-baseSpeed); // Draait naar rechts (klok mee)
   actieStartTijd = millis();
   lijnVerlaten = false;
   huidigeStatus = DRAAIEN;
