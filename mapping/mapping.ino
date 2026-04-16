@@ -87,6 +87,9 @@ struct EventEntry {
 EventEntry eventLog[MAX_EVENTS];
 int eventIndex = 0;
 
+// Functiedeclaratie (zodat de Arduino IDE de functie kent voordat hij in setup() wordt aangeroepen)
+void optimaliseerPad(char* padArray, int &lengte);
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -102,8 +105,18 @@ void setup() {
     char opgeslagenPad[MAX_PAD_LENGTE];
     preferences.getBytes("pad", opgeslagenPad, MAX_PAD_LENGTE);
 
-    Serial.print("Pad ("); Serial.print(opgeslagenPadLengte); Serial.print(" stappen): ");
+    Serial.print("Actueel Pad ("); Serial.print(opgeslagenPadLengte); Serial.print(" stappen): ");
     for (int i = 0; i < opgeslagenPadLengte; i++) Serial.print(opgeslagenPad[i]);
+    Serial.println();
+
+    // Maak een kopie, optimaliseer deze, en print het resultaat
+    char verkortPad[MAX_PAD_LENGTE];
+    memcpy(verkortPad, opgeslagenPad, opgeslagenPadLengte);
+    int verkortLengte = opgeslagenPadLengte;
+    optimaliseerPad(verkortPad, verkortLengte);
+
+    Serial.print("Verkort Pad ("); Serial.print(verkortLengte); Serial.print(" stappen): ");
+    for (int i = 0; i < verkortLengte; i++) Serial.print(verkortPad[i]);
     Serial.println();
 
     unsigned long raceTijd = preferences.getULong("raceTijd", 0);
@@ -430,13 +443,20 @@ void finishMapping() {
   preferences.end();
 
   Serial.println("\n=== MAPPING KLAAR ===");
-  Serial.print("Pad lengte: ");
-  Serial.println(padLengte);
-  Serial.print("Pad: ");
-  for (int i = 0; i < padLengte; i++) {
-    Serial.print(pad[i]);
-  }
+  Serial.print("Actueel Pad ("); Serial.print(padLengte); Serial.print(" stappen): ");
+  for (int i = 0; i < padLengte; i++) Serial.print(pad[i]);
+  Serial.println();
+
+  // Maak een tijdelijke kopie voor de Serial Monitor
+  char tempPad[MAX_PAD_LENGTE];
+  memcpy(tempPad, pad, padLengte);
+  int tempLengte = padLengte;
+  optimaliseerPad(tempPad, tempLengte);
+
+  Serial.print("Verkort Pad ("); Serial.print(tempLengte); Serial.print(" stappen): ");
+  for (int i = 0; i < tempLengte; i++) Serial.print(tempPad[i]);
   Serial.println("\n");
+
   Serial.println("Sluit USB uit en herstart voor output te zien.");
 }
 
@@ -474,4 +494,43 @@ void kalibreerRobot() {
   digitalWrite(2, LOW);
   Serial.println("\nKALIBRATIE KLAAR!");
   delay(1000);
+}
+
+// === PAD OPTIMALISATIE ===
+
+void optimaliseerPad(char* padArray, int &lengte) {
+  bool veranderd = true;
+  while (veranderd) {
+    veranderd = false;
+    // We zoeken naar patronen van 3 acties waarbij de middelste een 'U' is
+    for (int i = 0; i < lengte - 2; i++) {
+      if (padArray[i + 1] == 'U') {
+        char actie = ' ';
+        
+        // Standaard doolhof optimalisatie regels
+        if      (padArray[i] == 'L' && padArray[i+2] == 'R') actie = 'U';
+        else if (padArray[i] == 'L' && padArray[i+2] == 'S') actie = 'R';
+        else if (padArray[i] == 'R' && padArray[i+2] == 'L') actie = 'U';
+        else if (padArray[i] == 'S' && padArray[i+2] == 'L') actie = 'R';
+        else if (padArray[i] == 'S' && padArray[i+2] == 'S') actie = 'U';
+        else if (padArray[i] == 'L' && padArray[i+2] == 'L') actie = 'S';
+        // Voor de zekerheid
+        else if (padArray[i] == 'R' && padArray[i+2] == 'R') actie = 'S';
+        else if (padArray[i] == 'R' && padArray[i+2] == 'S') actie = 'L';
+        else if (padArray[i] == 'S' && padArray[i+2] == 'R') actie = 'L';
+
+        if (actie != ' ') {
+          padArray[i] = actie; // Vervang het begin van het patroon
+          
+          // Schuif de rest naar links om de overige te overschrijven
+          for (int j = i + 1; j < lengte - 2; j++) {
+            padArray[j] = padArray[j + 2];
+          }
+          lengte -= 2; 
+          veranderd = true;
+          break;
+        }
+      }
+    }
+  }
 }
