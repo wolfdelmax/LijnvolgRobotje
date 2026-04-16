@@ -9,151 +9,101 @@ float Kd = 0.007;
 int lastError = 0;
 
 // --- SNELHEID INSTELLINGEN (in procenten) ---
-int snelheidMapping   = 40;
-int minBochSnelheid   = 25;
+int snelheidMapping    = 40;
+int snelheidRace       = 40;
+int minBochSnelheid    = 25;
 int kalibratieSnelheid = 30;
 
 // --- ENCODER AFSTANDEN ---
-int doorrijTicks = 200;      // ~13 cm: tot de wielas bij de splitsing is
-int eindvlakTicks = 280;     // ~18,5 cm continu zwart → eindvlak bevestigd
+int doorrijTicks  = 200;
+int eindvlakTicks = 280;
 
 // ==========================================
 
-// --- COMPONENTEN ---
 QTRSensors qtr;
 Preferences preferences;
 
-// --- SENSOR PINS (QTR-8) ---
 const uint8_t SensorCount = 8;
 uint16_t sensorValues[SensorCount];
 const uint8_t sensorPinnen[] = {23, 15, 32, 27, 26, 14, 12, 13};
 
-// --- MOTOR PINS (TB6612) ---
-const int pinAIN1 = 16;
-const int pinAIN2 = 4;
-const int pinPWMA = 18;
-const int pinBIN1 = 17;
-const int pinBIN2 = 5;
-const int pinPWMB = 19;
-const int pwmFreq = 5000;
-const int pwmResolution = 8;
+const int pinAIN1 = 16, pinAIN2 = 4,  pinPWMA = 18;
+const int pinBIN1 = 17, pinBIN2 = 5,  pinPWMB = 19;
+const int pwmFreq = 5000, pwmResolution = 8;
 
-// --- ENCODER PINS ---
 const int pinEncoderL = 34;
 const int pinEncoderR = 35;
 volatile long encoderTellerL = 0;
 volatile long encoderTellerR = 0;
-const float mmPerTick = (43.0 * PI) / 205.0;
 
 void IRAM_ATTR encoderISR_L() { encoderTellerL++; }
 void IRAM_ATTR encoderISR_R() { encoderTellerR++; }
 
-// --- SCHAKELAAR ---
 const int pinModeSchakelaar = 1;
 
-// --- PATH OPSLAG ---
-const int MAX_PAD_LENGTE = 150;
-char pad[MAX_PAD_LENGTE];
-int padLengte = 0;
+int baseSpeed, raceSpeed, minBochSpeed, kalibSpeed;
 
-// --- STATUS ---
+enum RobotModus { MAPPING, WACHT_RACE, RACE, KLAAR };
+RobotModus huidigeRobotModus = MAPPING;
+
 enum RobotStatus { VOLGEN, NAAR_KRUISPUNT, DRAAIEN, DOORRIJDEN, DOORRIJDEN_UTURN, STOP };
 RobotStatus huidigeStatus = VOLGEN;
 
-// --- BEREKENDE SNELHEDEN ---
-int baseSpeed;
-int minBochSpeed;
-int kalibSpeed;
+const int MAX_PAD_LENGTE = 150;
+char pad[MAX_PAD_LENGTE];
+int  padLengte = 0;
+char verkortPad[MAX_PAD_LENGTE];
+int  verkortLengte = 0;
+int  raceIndex = 0;
 
-// --- TIMING & FLAGS ---
-unsigned long actieStartTijd = 0;
-bool lijnVerlaten = false;
-unsigned long startTime = 0;
-bool isFinished = false;
+unsigned long startTime     = 0;
+unsigned long raceStartTime = 0;
+unsigned long mappingTijdMs = 0;
 
-// --- KRUISPUNT DETECTIE (snapshot, blijft updaten tijdens NAAR_KRUISPUNT) ---
-bool snapLinks = false;
+bool snapLinks  = false;
 bool snapRechts = false;
 
-// --- EVENT LOG ---
+unsigned long actieStartTijd = 0;
+bool lijnVerlaten = false;
+
+bool vorigeSchakelaarHoog = true;
+
 const int MAX_EVENTS = 200;
 struct EventEntry {
   unsigned long tijd;
-  char event;
-  int sensorLinks;
-  int sensorRechts;
-  int error;
+  char  event;
+  int   sensorLinks;
+  int   sensorRechts;
+  int   extra;
 };
-EventEntry eventLog[MAX_EVENTS];
-int eventIndex = 0;
+EventEntry mappingLog[MAX_EVENTS];
+int        mappingLogIdx = 0;
+EventEntry raceLog[MAX_EVENTS];
+int        raceLogIdx = 0;
 
-// Functiedeclaratie (zodat de Arduino IDE de functie kent voordat hij in setup() wordt aangeroepen)
+// --- FORWARD DECLARATIES ---
 void optimaliseerPad(char* padArray, int &lengte);
+void kalibreerRobot();
+void runMapping();
+void runRace();
+void finishMapping();
+void finishRace();
+void printAlleData(unsigned long raceTijdMs);
+void resetVoorRace();
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  preferences.begin("robot-data", false);
-
-  bool dataKlaar = preferences.getBool("isKlaar", false);
-
-  if (dataKlaar) {
-    Serial.println("\n--- OPGESLAGEN DATA GEVONDEN ---");
-
-    int opgeslagenPadLengte = preferences.getInt("padLen", 0);
-    char opgeslagenPad[MAX_PAD_LENGTE];
-    preferences.getBytes("pad", opgeslagenPad, MAX_PAD_LENGTE);
-
-    Serial.print("Actueel Pad ("); Serial.print(opgeslagenPadLengte); Serial.print(" stappen): ");
-    for (int i = 0; i < opgeslagenPadLengte; i++) Serial.print(opgeslagenPad[i]);
-    Serial.println();
-
-    // Maak een kopie, optimaliseer deze, en print het resultaat
-    char verkortPad[MAX_PAD_LENGTE];
-    memcpy(verkortPad, opgeslagenPad, opgeslagenPadLengte);
-    int verkortLengte = opgeslagenPadLengte;
-    optimaliseerPad(verkortPad, verkortLengte);
-
-    Serial.print("Verkort Pad ("); Serial.print(verkortLengte); Serial.print(" stappen): ");
-    for (int i = 0; i < verkortLengte; i++) Serial.print(verkortPad[i]);
-    Serial.println();
-
-    unsigned long raceTijd = preferences.getULong("raceTijd", 0);
-    Serial.print("Racetijd: "); Serial.print(raceTijd / 1000.0, 2); Serial.println(" seconden");
-
-    int opgeslagenEvents = preferences.getInt("eventCnt", 0);
-    EventEntry opgeslagenLog[MAX_EVENTS];
-    preferences.getBytes("events", opgeslagenLog, sizeof(opgeslagenLog));
-
-    Serial.println("\nTijd(ms),Event,SensorL,SensorR,Error");
-    for (int i = 0; i < opgeslagenEvents; i++) {
-      Serial.print(opgeslagenLog[i].tijd);
-      Serial.print(","); Serial.print(opgeslagenLog[i].event);
-      Serial.print(","); Serial.print(opgeslagenLog[i].sensorLinks);
-      Serial.print(","); Serial.print(opgeslagenLog[i].sensorRechts);
-      Serial.print(","); Serial.println(opgeslagenLog[i].error);
-    }
-
-    Serial.println("--- EINDE DATA ---");
-    Serial.println("Geheugen gewist voor volgende run.");
-
-    preferences.putBool("isKlaar", false);
-    preferences.end();
-
-    while (true) { delay(1000); }
-  }
-
   pinMode(pinModeSchakelaar, INPUT_PULLUP);
 
-  baseSpeed    = (snelheidMapping * 255) / 100;
-  minBochSpeed = (minBochSnelheid * 255) / 100;
+  baseSpeed    = (snelheidMapping    * 255) / 100;
+  raceSpeed    = (snelheidRace       * 255) / 100;
+  minBochSpeed = (minBochSnelheid    * 255) / 100;
   kalibSpeed   = (kalibratieSnelheid * 255) / 100;
 
-  pinMode(pinAIN1, OUTPUT);
-  pinMode(pinAIN2, OUTPUT);
-  pinMode(pinBIN1, OUTPUT);
-  pinMode(pinBIN2, OUTPUT);
+  pinMode(pinAIN1, OUTPUT); pinMode(pinAIN2, OUTPUT);
+  pinMode(pinBIN1, OUTPUT); pinMode(pinBIN2, OUTPUT);
   ledcAttach(pinPWMA, pwmFreq, pwmResolution);
   ledcAttach(pinPWMB, pwmFreq, pwmResolution);
 
@@ -165,149 +115,267 @@ void setup() {
   qtr.setTypeRC();
   qtr.setSensorPins(sensorPinnen, SensorCount);
 
+  preferences.begin("robot-data", false);
+  preferences.clear();
+  preferences.end();
+
+  huidigeRobotModus = MAPPING;
+
   kalibreerRobot();
 
-  Serial.println("\n=== MAPPING GESTART ===");
-  startTime = millis();
+  Serial.println("\n=== MAPPING MODUS ===");
+  Serial.println("Zet schakelaar LOW om te starten...");
 
-  preferences.clear();
+  startTime = millis();
 }
 
 void loop() {
-  if (isFinished) return;
+  bool schakelaarHoog = (digitalRead(pinModeSchakelaar) == HIGH);
 
-  if (digitalRead(pinModeSchakelaar) == HIGH) {
+  if (huidigeRobotModus == KLAAR) {
     remmen();
     return;
   }
 
+  if (huidigeRobotModus == WACHT_RACE) {
+    remmen();
+    if (vorigeSchakelaarHoog && !schakelaarHoog) {
+      Serial.println("\n=== RACE GESTART ===");
+      resetVoorRace();
+      delay(200);  // korte settle-tijd zodat eerste sensor-read stabiel is
+    }
+    vorigeSchakelaarHoog = schakelaarHoog;
+    return;
+  }
+
+  vorigeSchakelaarHoog = schakelaarHoog;
+
+  if (schakelaarHoog) {
+    remmen();
+    return;
+  }
+
+  if (huidigeRobotModus == MAPPING) runMapping();
+  else if (huidigeRobotModus == RACE) runRace();
+}
+
+// ==========================================
+// COMPLETE RESET VOOR RACE
+// ==========================================
+void resetVoorRace() {
+  huidigeRobotModus = RACE;
+  huidigeStatus     = VOLGEN;
+  raceIndex         = 0;
+  raceLogIdx        = 0;
+  lastError         = 0;
+  encoderTellerL    = 0;
+  encoderTellerR    = 0;
+  snapLinks         = false;
+  snapRechts        = false;
+  lijnVerlaten      = false;
+  actieStartTijd    = 0;
+  raceStartTime     = millis();
+
+  // Forceer eerste sensor read om waarden te initialiseren
+  qtr.readLineBlack(sensorValues);
+}
+
+// ==========================================
+// MAPPING STATE MACHINE
+// ==========================================
+void runMapping() {
   uint16_t positie = qtr.readLineBlack(sensorValues);
 
   switch (huidigeStatus) {
 
     case VOLGEN: {
-      bool buitenLinks  = (sensorValues[0] > 600 || sensorValues[1] > 600);
-      bool buitenRechts = (sensorValues[6] > 600 || sensorValues[7] > 600);
+      bool bL = (sensorValues[0] > 600 || sensorValues[1] > 600);
+      bool bR = (sensorValues[6] > 600 || sensorValues[7] > 600);
 
-      // --- Begin van kruispunt of eindvlak? ---
-      if (buitenLinks || buitenRechts) {
-        snapLinks  = buitenLinks;
-        snapRechts = buitenRechts;
-        startNaarKruispunt();
+      if (bL || bR) {
+        snapLinks = bL; snapRechts = bR;
+        startNaarKruispunt(baseSpeed);
         break;
       }
-
-      // --- Doodlopend ---
       if (isDoodlopend()) {
-        encoderTellerL = 0;
-        encoderTellerR = 0;
-        huidigeStatus = DOORRIJDEN_UTURN; // Ga nu eerst doorrijden in plaats van direct draaien
+        encoderTellerL = encoderTellerR = 0;
+        huidigeStatus = DOORRIJDEN_UTURN;
         break;
       }
 
-      // --- Normaal lijn volgen met PD ---
       int error = (int)positie - 3500;
-      float dynamischeSnelheid = baseSpeed - (abs(error) * 0.025);
-      dynamischeSnelheid = constrain(dynamischeSnelheid, minBochSpeed, baseSpeed);
-
-      int correctie = (error * Kp) + ((error - lastError) * Kd);
+      float dyn = constrain(baseSpeed - abs(error) * 0.025f, (float)minBochSpeed, (float)baseSpeed);
+      int cor = (int)(error * Kp + (error - lastError) * Kd);
       lastError = error;
-
-      rijden((int)dynamischeSnelheid, correctie);
+      rijden((int)dyn, cor);
       break;
     }
 
     case NAAR_KRUISPUNT: {
-      // 1. Blijf snapshots updaten (vangt scheve aanrijding op)
-      if (sensorValues[0] > 600 || sensorValues[1] > 600) snapLinks = true;
+      if (sensorValues[0] > 600 || sensorValues[1] > 600) snapLinks  = true;
       if (sensorValues[6] > 600 || sensorValues[7] > 600) snapRechts = true;
 
-      // 2. Eindvlak-check: zien we een groot zwart vlak?
       int zwartTel = 0;
-      for (int i = 0; i < SensorCount; i++) {
-        if (sensorValues[i] > 600) zwartTel++;
-      }
-
+      for (int i = 0; i < SensorCount; i++) if (sensorValues[i] > 600) zwartTel++;
       long gemTicks = (encoderTellerL + encoderTellerR) / 2;
 
       if (zwartTel >= 6) {
         if (gemTicks >= eindvlakTicks) {
-          Serial.println(">> EINDVAK gedetecteerd!");
-          logEventEntry('F', 0);
+          Serial.println(">> EINDVAK!");
+          logMapping('F', 0);
           finishMapping();
         } else {
-          // Blijf rechtdoor rijden en meten
           setMotorLinks(baseSpeed);
           setMotorRechts(baseSpeed);
         }
         break;
       }
 
-      // 3. Geen eindvlak: wacht tot wielas op splitsing staat
       if (gemTicks < doorrijTicks) {
         setMotorLinks(baseSpeed);
         setMotorRechts(baseSpeed);
         break;
       }
 
-      // 4. Beslissing maken volgens always-left (L → S → R)
-      bool kanRechtdoor = (sensorValues[3] > 600 || sensorValues[4] > 600);
+      bool kanS = (sensorValues[3] > 600 || sensorValues[4] > 600);
 
-      if (snapLinks) {
-        pad[padLengte++] = 'L';
-        Serial.println("→ LINKS");
-        logEventEntry('L', 0);
-        startDraaiLinks();
-      }
-      else if (kanRechtdoor) {
-        pad[padLengte++] = 'S';
-        Serial.println("→ RECHTDOOR");
-        logEventEntry('S', 0);
+      if (snapLinks)       { pad[padLengte++] = 'L'; Serial.println("→ LINKS");     logMapping('L', 0); startDraai(-baseSpeed, baseSpeed); }
+      else if (kanS)       { pad[padLengte++] = 'S'; Serial.println("→ RECHTDOOR"); logMapping('S', 0); huidigeStatus = VOLGEN; }
+      else if (snapRechts) { pad[padLengte++] = 'R'; Serial.println("→ RECHTS");    logMapping('R', 0); startDraai(baseSpeed, -baseSpeed); }
+      else                 { startUTurnMapping(); }
+      break;
+    }
+
+    case DRAAIEN:
+      qtr.readLineBlack(sensorValues);
+      if (!lijnVerlaten) {
+        if (sensorValues[3] < 300 && sensorValues[4] < 300) lijnVerlaten = true;
+      } else if (sensorValues[3] > 500 || sensorValues[4] > 500) {
         huidigeStatus = VOLGEN;
       }
-      else if (snapRechts) {
-        pad[padLengte++] = 'R';
-        Serial.println("→ RECHTS");
-        logEventEntry('R', 0);
-        startDraaiRechts();
+      if (millis() - actieStartTijd > 1500) huidigeStatus = VOLGEN;
+      break;
+
+    case DOORRIJDEN:
+      if ((encoderTellerL + encoderTellerR) / 2 >= doorrijTicks) huidigeStatus = VOLGEN;
+      break;
+
+    case DOORRIJDEN_UTURN:
+      setMotorLinks(baseSpeed);
+      setMotorRechts(baseSpeed);
+      if ((encoderTellerL + encoderTellerR) / 2 >= doorrijTicks) startUTurnMapping();
+      break;
+
+    case STOP:
+      remmen();
+      break;
+  }
+}
+
+// ==========================================
+// RACE STATE MACHINE
+// ==========================================
+void runRace() {
+  uint16_t positie = qtr.readLineBlack(sensorValues);
+
+  // Debug: print positie en sensor-samenvatting elke 500ms
+  static unsigned long laatsteDebugPrint = 0;
+  if (millis() - laatsteDebugPrint > 500) {
+    laatsteDebugPrint = millis();
+    Serial.print("[RACE] pos="); Serial.print(positie);
+    Serial.print(" s0="); Serial.print(sensorValues[0]);
+    Serial.print(" s3="); Serial.print(sensorValues[3]);
+    Serial.print(" s4="); Serial.print(sensorValues[4]);
+    Serial.print(" s7="); Serial.print(sensorValues[7]);
+    Serial.print(" status="); Serial.print(huidigeStatus);
+    Serial.print(" idx="); Serial.println(raceIndex);
+  }
+
+  switch (huidigeStatus) {
+
+    case VOLGEN: {
+      bool bL = (sensorValues[0] > 600 || sensorValues[1] > 600);
+      bool bR = (sensorValues[6] > 600 || sensorValues[7] > 600);
+
+      if (bL || bR) {
+        snapLinks = bL; snapRechts = bR;
+        startNaarKruispunt(raceSpeed);
+        break;
       }
-      else {
-        startOmdraaien();
+      if (isDoodlopend()) {
+        logRace('!', raceIndex);
+        encoderTellerL = encoderTellerR = 0;
+        huidigeStatus = DOORRIJDEN_UTURN;
+        break;
+      }
+
+      int error = (int)positie - 3500;
+      float dyn = constrain(raceSpeed - abs(error) * 0.025f, (float)minBochSpeed, (float)raceSpeed);
+      int cor = (int)(error * Kp + (error - lastError) * Kd);
+      lastError = error;
+      rijden((int)dyn, cor);
+      break;
+    }
+
+    case NAAR_KRUISPUNT: {
+      int zwartTel = 0;
+      for (int i = 0; i < SensorCount; i++) if (sensorValues[i] > 600) zwartTel++;
+      long gemTicks = (encoderTellerL + encoderTellerR) / 2;
+
+      if (zwartTel >= 6) {
+        if (gemTicks >= eindvlakTicks) {
+          Serial.println(">> EINDVAK tijdens race!");
+          logRace('F', raceIndex);
+          finishRace();
+        } else {
+          setMotorLinks(raceSpeed);
+          setMotorRechts(raceSpeed);
+        }
+        break;
+      }
+
+      if (gemTicks < doorrijTicks) {
+        setMotorLinks(raceSpeed);
+        setMotorRechts(raceSpeed);
+        break;
+      }
+
+      if (raceIndex < verkortLengte) {
+        char inst = verkortPad[raceIndex++];
+        Serial.print("→ Race "); Serial.print(raceIndex); Serial.print(": "); Serial.println(inst);
+        logRace(inst, raceIndex - 1);
+
+        if      (inst == 'L') startDraai(-raceSpeed,  raceSpeed);
+        else if (inst == 'R') startDraai( raceSpeed, -raceSpeed);
+        else if (inst == 'S') huidigeStatus = VOLGEN;
+        else if (inst == 'U') startDraai( raceSpeed, -raceSpeed);
+      } else {
+        Serial.println(">> Pad op, onverwachte splitsing - rechtdoor");
+        logRace('?', raceIndex);
+        huidigeStatus = VOLGEN;
       }
       break;
     }
 
     case DRAAIEN:
       qtr.readLineBlack(sensorValues);
-
       if (!lijnVerlaten) {
-        if (sensorValues[3] < 300 && sensorValues[4] < 300) {
-          lijnVerlaten = true;
-        }
-      }
-      else if (sensorValues[3] > 500 || sensorValues[4] > 500) {
+        if (sensorValues[3] < 300 && sensorValues[4] < 300) lijnVerlaten = true;
+      } else if (sensorValues[3] > 500 || sensorValues[4] > 500) {
         huidigeStatus = VOLGEN;
       }
-
-      if (millis() - actieStartTijd > 1500) {
-        huidigeStatus = VOLGEN;
-      }
+      if (millis() - actieStartTijd > 1500) huidigeStatus = VOLGEN;
       break;
 
     case DOORRIJDEN:
-      if ((encoderTellerL + encoderTellerR) / 2 >= doorrijTicks) {
-        huidigeStatus = VOLGEN;
-      }
+      if ((encoderTellerL + encoderTellerR) / 2 >= doorrijTicks) huidigeStatus = VOLGEN;
       break;
 
     case DOORRIJDEN_UTURN:
-      // Laat de motoren vooruit draaien tijdens de extra afstand
-      setMotorLinks(baseSpeed);
-      setMotorRechts(baseSpeed);
-
-      // Controleer of de robot de doorrijTicks heeft gehaald
+      setMotorLinks(raceSpeed);
+      setMotorRechts(raceSpeed);
       if ((encoderTellerL + encoderTellerR) / 2 >= doorrijTicks) {
-        startOmdraaien(); // Zet de U-turn in
+        startDraai(raceSpeed, -raceSpeed);
       }
       break;
 
@@ -317,97 +385,142 @@ void loop() {
   }
 }
 
-// === NAVIGATIE HELPERS ===
+// ==========================================
+// FINISH FUNCTIES
+// ==========================================
+
+void finishMapping() {
+  remmen();
+
+  mappingTijdMs = millis() - startTime;
+
+  memcpy(verkortPad, pad, padLengte);
+  verkortLengte = padLengte;
+  optimaliseerPad(verkortPad, verkortLengte);
+
+  Serial.println("\n=== MAPPING KLAAR ===");
+  Serial.print("Pad ("); Serial.print(padLengte); Serial.print("): ");
+  for (int i = 0; i < padLengte; i++) Serial.print(pad[i]);
+  Serial.println();
+  Serial.print("Verkort ("); Serial.print(verkortLengte); Serial.print("): ");
+  for (int i = 0; i < verkortLengte; i++) Serial.print(verkortPad[i]);
+  Serial.println();
+  Serial.println("\n>> Zet robot terug op start.");
+  Serial.println(">> Zet schakelaar HIGH, dan LOW om race te starten.");
+
+  huidigeRobotModus = WACHT_RACE;
+  vorigeSchakelaarHoog = false;
+}
+
+void finishRace() {
+  remmen();
+
+  unsigned long raceTijdMs = millis() - raceStartTime;
+
+  Serial.println("\n=== RACE KLAAR ===");
+  Serial.print("Race tijd: "); Serial.print(raceTijdMs / 1000.0, 2); Serial.println(" sec");
+
+  printAlleData(raceTijdMs);
+
+  huidigeRobotModus = KLAAR;
+}
+
+void printAlleData(unsigned long raceTijdMs) {
+  Serial.println("\n========== MAPPING DATA ==========");
+  Serial.print("Mapping tijd: "); Serial.print(mappingTijdMs / 1000.0, 2); Serial.println(" sec");
+  Serial.print("Pad ("); Serial.print(padLengte); Serial.print("): ");
+  for (int i = 0; i < padLengte; i++) Serial.print(pad[i]);
+  Serial.println();
+  Serial.print("Verkort ("); Serial.print(verkortLengte); Serial.print("): ");
+  for (int i = 0; i < verkortLengte; i++) Serial.print(verkortPad[i]);
+  Serial.println();
+
+  Serial.println("\n--- Mapping events ---");
+  Serial.println("Tijd,Event,SensL,SensR,Extra");
+  for (int i = 0; i < mappingLogIdx; i++) {
+    Serial.print(mappingLog[i].tijd); Serial.print(",");
+    Serial.print(mappingLog[i].event); Serial.print(",");
+    Serial.print(mappingLog[i].sensorLinks); Serial.print(",");
+    Serial.print(mappingLog[i].sensorRechts); Serial.print(",");
+    Serial.println(mappingLog[i].extra);
+  }
+
+  Serial.println("\n========== RACE DATA ==========");
+  Serial.print("Race tijd: "); Serial.print(raceTijdMs / 1000.0, 2); Serial.println(" sec");
+  Serial.print("Pad ("); Serial.print(padLengte); Serial.print("): ");
+  for (int i = 0; i < padLengte; i++) Serial.print(pad[i]);
+  Serial.println();
+  Serial.print("Verkort ("); Serial.print(verkortLengte); Serial.print("): ");
+  for (int i = 0; i < verkortLengte; i++) Serial.print(verkortPad[i]);
+  Serial.println();
+
+  Serial.println("\n--- Race events ---");
+  Serial.println("Tijd,Event,SensL,SensR,PadIdx");
+  for (int i = 0; i < raceLogIdx; i++) {
+    Serial.print(raceLog[i].tijd); Serial.print(",");
+    Serial.print(raceLog[i].event); Serial.print(",");
+    Serial.print(raceLog[i].sensorLinks); Serial.print(",");
+    Serial.print(raceLog[i].sensorRechts); Serial.print(",");
+    Serial.println(raceLog[i].extra);
+  }
+  Serial.println("\n========== EINDE ==========");
+}
+
+// ==========================================
+// NAVIGATIE HELPERS
+// ==========================================
 
 bool isDoodlopend() {
-  for (int i = 0; i < SensorCount; i++) {
+  for (int i = 0; i < SensorCount; i++)
     if (sensorValues[i] > 300) return false;
-  }
   return true;
 }
 
-void startNaarKruispunt() {
-  encoderTellerL = 0;
-  encoderTellerR = 0;
-  setMotorLinks(baseSpeed);
-  setMotorRechts(baseSpeed);
+void startNaarKruispunt(int spd) {
+  encoderTellerL = encoderTellerR = 0;
+  setMotorLinks(spd);
+  setMotorRechts(spd);
   huidigeStatus = NAAR_KRUISPUNT;
 }
 
-// === DRAAI ACTIES ===
-
-void startDraaiLinks() {
-  setMotorLinks(-baseSpeed);
-  setMotorRechts(baseSpeed);
+void startDraai(int spdL, int spdR) {
+  setMotorLinks(spdL);
+  setMotorRechts(spdR);
   actieStartTijd = millis();
-  lijnVerlaten = false;
-  huidigeStatus = DRAAIEN;
+  lijnVerlaten   = false;
+  huidigeStatus  = DRAAIEN;
 }
 
-void startDraaiRechts() {
-  setMotorLinks(baseSpeed);
-  setMotorRechts(-baseSpeed);
-  actieStartTijd = millis();
-  lijnVerlaten = false;
-  huidigeStatus = DRAAIEN;
-}
-
-void startOmdraaien() {
+void startUTurnMapping() {
   if (padLengte < MAX_PAD_LENGTE) {
     pad[padLengte++] = 'U';
-    Serial.println("→ U-TURN (doodlopen)");
-    logEventEntry('U', 0);
+    Serial.println("→ U-TURN");
+    logMapping('U', 0);
   }
-  setMotorLinks(baseSpeed);
-  setMotorRechts(-baseSpeed); // Draait naar rechts (klok mee)
-  actieStartTijd = millis();
-  lijnVerlaten = false;
-  huidigeStatus = DRAAIEN;
+  startDraai(baseSpeed, -baseSpeed);
 }
 
-// === MOTOR CONTROL ===
+// ==========================================
+// MOTOR CONTROL
+// ==========================================
 
 void rijden(int snelheid, int correctie) {
-  setMotorLinks(constrain(snelheid + correctie, -255, 255));
+  setMotorLinks (constrain(snelheid + correctie, -255, 255));
   setMotorRechts(constrain(snelheid - correctie, -255, 255));
 }
 
-void setMotorLinks(int speed) {
-  speed = constrain(speed, -255, 255);
-  if (speed > 0) {
-    digitalWrite(pinAIN1, HIGH);
-    digitalWrite(pinAIN2, LOW);
-    ledcWrite(pinPWMA, speed);
-  }
-  else if (speed < 0) {
-    digitalWrite(pinAIN1, LOW);
-    digitalWrite(pinAIN2, HIGH);
-    ledcWrite(pinPWMA, -speed);
-  }
-  else {
-    digitalWrite(pinAIN1, LOW);
-    digitalWrite(pinAIN2, LOW);
-    ledcWrite(pinPWMA, 0);
-  }
+void setMotorLinks(int s) {
+  s = constrain(s, -255, 255);
+  if (s > 0)      { digitalWrite(pinAIN1, HIGH); digitalWrite(pinAIN2, LOW);  ledcWrite(pinPWMA,  s); }
+  else if (s < 0) { digitalWrite(pinAIN1, LOW);  digitalWrite(pinAIN2, HIGH); ledcWrite(pinPWMA, -s); }
+  else            { digitalWrite(pinAIN1, LOW);  digitalWrite(pinAIN2, LOW);  ledcWrite(pinPWMA,  0); }
 }
 
-void setMotorRechts(int speed) {
-  speed = constrain(speed, -255, 255);
-  if (speed > 0) {
-    digitalWrite(pinBIN1, HIGH);
-    digitalWrite(pinBIN2, LOW);
-    ledcWrite(pinPWMB, speed);
-  }
-  else if (speed < 0) {
-    digitalWrite(pinBIN1, LOW);
-    digitalWrite(pinBIN2, HIGH);
-    ledcWrite(pinPWMB, -speed);
-  }
-  else {
-    digitalWrite(pinBIN1, LOW);
-    digitalWrite(pinBIN2, LOW);
-    ledcWrite(pinPWMB, 0);
-  }
+void setMotorRechts(int s) {
+  s = constrain(s, -255, 255);
+  if (s > 0)      { digitalWrite(pinBIN1, HIGH); digitalWrite(pinBIN2, LOW);  ledcWrite(pinPWMB,  s); }
+  else if (s < 0) { digitalWrite(pinBIN1, LOW);  digitalWrite(pinBIN2, HIGH); ledcWrite(pinPWMB, -s); }
+  else            { digitalWrite(pinBIN1, LOW);  digitalWrite(pinBIN2, LOW);  ledcWrite(pinPWMB,  0); }
 }
 
 void remmen() {
@@ -415,118 +528,73 @@ void remmen() {
   setMotorRechts(0);
 }
 
-// === FINISH & OPSLAG ===
+// ==========================================
+// EVENT LOGGING
+// ==========================================
 
-void logEventEntry(char event, int error) {
-  if (eventIndex < MAX_EVENTS) {
-    eventLog[eventIndex].tijd = millis() - startTime;
-    eventLog[eventIndex].event = event;
-    eventLog[eventIndex].sensorLinks = sensorValues[0];
-    eventLog[eventIndex].sensorRechts = sensorValues[7];
-    eventLog[eventIndex].error = error;
-    eventIndex++;
+void logMapping(char event, int extra) {
+  if (mappingLogIdx < MAX_EVENTS) {
+    mappingLog[mappingLogIdx] = { millis() - startTime, event,
+                                  (int)sensorValues[0], (int)sensorValues[7], extra };
+    mappingLogIdx++;
   }
 }
 
-void finishMapping() {
-  remmen();
-  isFinished = true;
-
-  unsigned long raceTime = millis() - startTime;
-
-  preferences.putInt("padLen", padLengte);
-  preferences.putBytes("pad", pad, MAX_PAD_LENGTE);
-  preferences.putULong("raceTijd", raceTime);
-  preferences.putInt("eventCnt", eventIndex);
-  preferences.putBytes("events", eventLog, sizeof(eventLog));
-  preferences.putBool("isKlaar", true);
-  preferences.end();
-
-  Serial.println("\n=== MAPPING KLAAR ===");
-  Serial.print("Actueel Pad ("); Serial.print(padLengte); Serial.print(" stappen): ");
-  for (int i = 0; i < padLengte; i++) Serial.print(pad[i]);
-  Serial.println();
-
-  // Maak een tijdelijke kopie voor de Serial Monitor
-  char tempPad[MAX_PAD_LENGTE];
-  memcpy(tempPad, pad, padLengte);
-  int tempLengte = padLengte;
-  optimaliseerPad(tempPad, tempLengte);
-
-  Serial.print("Verkort Pad ("); Serial.print(tempLengte); Serial.print(" stappen): ");
-  for (int i = 0; i < tempLengte; i++) Serial.print(tempPad[i]);
-  Serial.println("\n");
-
-  Serial.println("Sluit USB uit en herstart voor output te zien.");
+void logRace(char event, int padIdx) {
+  if (raceLogIdx < MAX_EVENTS) {
+    raceLog[raceLogIdx] = { millis() - raceStartTime, event,
+                            (int)sensorValues[0], (int)sensorValues[7], padIdx };
+    raceLogIdx++;
+  }
 }
 
-// === KALIBRATIE ===
+// ==========================================
+// KALIBRATIE
+// ==========================================
 
 void kalibreerRobot() {
   pinMode(2, OUTPUT);
   digitalWrite(2, HIGH);
-
-  Serial.println("KALIBRATIE GESTART (automatisch draaien)...");
-
+  Serial.println("KALIBRATIE...");
   for (uint16_t i = 0; i < 400; i++) {
-    if (i < 100) {
-      setMotorLinks(-kalibSpeed);
-      setMotorRechts(kalibSpeed);
-    } else if (i < 200) {
-      setMotorLinks(kalibSpeed);
-      setMotorRechts(-kalibSpeed);
-    } else if (i < 300) {
-      setMotorLinks(-kalibSpeed);
-      setMotorRechts(kalibSpeed);
-    } else {
-      setMotorLinks(kalibSpeed);
-      setMotorRechts(-kalibSpeed);
-    }
-
+    if      (i < 100) { setMotorLinks(-kalibSpeed); setMotorRechts( kalibSpeed); }
+    else if (i < 200) { setMotorLinks( kalibSpeed); setMotorRechts(-kalibSpeed); }
+    else if (i < 300) { setMotorLinks(-kalibSpeed); setMotorRechts( kalibSpeed); }
+    else              { setMotorLinks( kalibSpeed); setMotorRechts(-kalibSpeed); }
     qtr.calibrate();
-
-    if (i % 50 == 0) {
-      Serial.print(".");
-    }
+    if (i % 50 == 0) Serial.print(".");
   }
-
   remmen();
   digitalWrite(2, LOW);
   Serial.println("\nKALIBRATIE KLAAR!");
   delay(1000);
 }
 
-// === PAD OPTIMALISATIE ===
+// ==========================================
+// PAD OPTIMALISATIE
+// ==========================================
 
 void optimaliseerPad(char* padArray, int &lengte) {
   bool veranderd = true;
   while (veranderd) {
     veranderd = false;
-    // We zoeken naar patronen van 3 acties waarbij de middelste een 'U' is
     for (int i = 0; i < lengte - 2; i++) {
       if (padArray[i + 1] == 'U') {
         char actie = ' ';
-        
-        // Standaard doolhof optimalisatie regels
         if      (padArray[i] == 'L' && padArray[i+2] == 'R') actie = 'U';
         else if (padArray[i] == 'L' && padArray[i+2] == 'S') actie = 'R';
         else if (padArray[i] == 'R' && padArray[i+2] == 'L') actie = 'U';
         else if (padArray[i] == 'S' && padArray[i+2] == 'L') actie = 'R';
         else if (padArray[i] == 'S' && padArray[i+2] == 'S') actie = 'U';
         else if (padArray[i] == 'L' && padArray[i+2] == 'L') actie = 'S';
-        // Voor de zekerheid
         else if (padArray[i] == 'R' && padArray[i+2] == 'R') actie = 'S';
         else if (padArray[i] == 'R' && padArray[i+2] == 'S') actie = 'L';
         else if (padArray[i] == 'S' && padArray[i+2] == 'R') actie = 'L';
 
         if (actie != ' ') {
-          padArray[i] = actie; // Vervang het begin van het patroon
-          
-          // Schuif de rest naar links om de overige te overschrijven
-          for (int j = i + 1; j < lengte - 2; j++) {
-            padArray[j] = padArray[j + 2];
-          }
-          lengte -= 2; 
+          padArray[i] = actie;
+          for (int j = i + 1; j < lengte - 2; j++) padArray[j] = padArray[j + 2];
+          lengte -= 2;
           veranderd = true;
           break;
         }
