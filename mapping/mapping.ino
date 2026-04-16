@@ -59,6 +59,7 @@ int  raceIndex = 0;
 unsigned long startTime     = 0;
 unsigned long raceStartTime = 0;
 unsigned long mappingTijdMs = 0;
+unsigned long opgeslagenRaceTijd = 0;
 
 bool snapLinks  = false;
 bool snapRechts = false;
@@ -88,13 +89,9 @@ void runMapping();
 void runRace();
 void finishMapping();
 void finishRace();
-void printAlleData(unsigned long raceTijdMs);
 void resetVoorRace();
 
 void setup() {
-  Serial.begin(115200);
-  delay(1000);
-
   pinMode(pinModeSchakelaar, INPUT_PULLUP);
 
   baseSpeed    = (snelheidMapping    * 255) / 100;
@@ -116,16 +113,41 @@ void setup() {
   qtr.setSensorPins(sensorPinnen, SensorCount);
 
   preferences.begin("robot-data", false);
-  preferences.clear();
+  int runState = preferences.getInt("state", 0);
+
+  if (runState == 0) {
+    huidigeRobotModus = MAPPING;
+    kalibreerRobot();
+  } 
+  else if (runState == 1) {
+    padLengte = preferences.getInt("padLen", 0);
+    preferences.getBytes("pad", pad, MAX_PAD_LENGTE);
+    verkortLengte = preferences.getInt("vpadLen", 0);
+    preferences.getBytes("vpad", verkortPad, MAX_PAD_LENGTE);
+    mappingTijdMs = preferences.getULong("mTijd", 0);
+    mappingLogIdx = preferences.getInt("mLogCnt", 0);
+    preferences.getBytes("mLog", mappingLog, sizeof(mappingLog));
+
+    huidigeRobotModus = WACHT_RACE;
+    kalibreerRobot();
+  }
+  else if (runState == 2) {
+    padLengte = preferences.getInt("padLen", 0);
+    preferences.getBytes("pad", pad, MAX_PAD_LENGTE);
+    verkortLengte = preferences.getInt("vpadLen", 0);
+    preferences.getBytes("vpad", verkortPad, MAX_PAD_LENGTE);
+    mappingTijdMs = preferences.getULong("mTijd", 0);
+    mappingLogIdx = preferences.getInt("mLogCnt", 0);
+    preferences.getBytes("mLog", mappingLog, sizeof(mappingLog));
+
+    opgeslagenRaceTijd = preferences.getULong("rTijd", 0);
+    raceLogIdx = preferences.getInt("rLogCnt", 0);
+    preferences.getBytes("rLog", raceLog, sizeof(raceLog));
+
+    huidigeRobotModus = KLAAR;
+  }
+  
   preferences.end();
-
-  huidigeRobotModus = MAPPING;
-
-  kalibreerRobot();
-
-  Serial.println("\n=== MAPPING MODUS ===");
-  Serial.println("Zet schakelaar LOW om te starten...");
-
   startTime = millis();
 }
 
@@ -134,15 +156,23 @@ void loop() {
 
   if (huidigeRobotModus == KLAAR) {
     remmen();
+
+    // Edge-detectie: wissen bij overgang HIGH → LOW
+    if (vorigeSchakelaarHoog && !schakelaarHoog) {
+      preferences.begin("robot-data", false);
+      preferences.clear();
+      preferences.end();
+      huidigeRobotModus = (RobotModus)99;
+    }
+    vorigeSchakelaarHoog = schakelaarHoog;
     return;
   }
 
   if (huidigeRobotModus == WACHT_RACE) {
     remmen();
     if (vorigeSchakelaarHoog && !schakelaarHoog) {
-      Serial.println("\n=== RACE GESTART ===");
       resetVoorRace();
-      delay(200);  // korte settle-tijd zodat eerste sensor-read stabiel is
+      delay(200);
     }
     vorigeSchakelaarHoog = schakelaarHoog;
     return;
@@ -159,9 +189,6 @@ void loop() {
   else if (huidigeRobotModus == RACE) runRace();
 }
 
-// ==========================================
-// COMPLETE RESET VOOR RACE
-// ==========================================
 void resetVoorRace() {
   huidigeRobotModus = RACE;
   huidigeStatus     = VOLGEN;
@@ -176,7 +203,6 @@ void resetVoorRace() {
   actieStartTijd    = 0;
   raceStartTime     = millis();
 
-  // Forceer eerste sensor read om waarden te initialiseren
   qtr.readLineBlack(sensorValues);
 }
 
@@ -221,7 +247,6 @@ void runMapping() {
 
       if (zwartTel >= 6) {
         if (gemTicks >= eindvlakTicks) {
-          Serial.println(">> EINDVAK!");
           logMapping('F', 0);
           finishMapping();
         } else {
@@ -239,9 +264,9 @@ void runMapping() {
 
       bool kanS = (sensorValues[3] > 600 || sensorValues[4] > 600);
 
-      if (snapLinks)       { pad[padLengte++] = 'L'; Serial.println("→ LINKS");     logMapping('L', 0); startDraai(-baseSpeed, baseSpeed); }
-      else if (kanS)       { pad[padLengte++] = 'S'; Serial.println("→ RECHTDOOR"); logMapping('S', 0); huidigeStatus = VOLGEN; }
-      else if (snapRechts) { pad[padLengte++] = 'R'; Serial.println("→ RECHTS");    logMapping('R', 0); startDraai(baseSpeed, -baseSpeed); }
+      if (snapLinks)       { pad[padLengte++] = 'L'; logMapping('L', 0); startDraai(-baseSpeed, baseSpeed); }
+      else if (kanS)       { pad[padLengte++] = 'S'; logMapping('S', 0); huidigeStatus = VOLGEN; }
+      else if (snapRechts) { pad[padLengte++] = 'R'; logMapping('R', 0); startDraai(baseSpeed, -baseSpeed); }
       else                 { startUTurnMapping(); }
       break;
     }
@@ -278,19 +303,6 @@ void runMapping() {
 void runRace() {
   uint16_t positie = qtr.readLineBlack(sensorValues);
 
-  // Debug: print positie en sensor-samenvatting elke 500ms
-  static unsigned long laatsteDebugPrint = 0;
-  if (millis() - laatsteDebugPrint > 500) {
-    laatsteDebugPrint = millis();
-    Serial.print("[RACE] pos="); Serial.print(positie);
-    Serial.print(" s0="); Serial.print(sensorValues[0]);
-    Serial.print(" s3="); Serial.print(sensorValues[3]);
-    Serial.print(" s4="); Serial.print(sensorValues[4]);
-    Serial.print(" s7="); Serial.print(sensorValues[7]);
-    Serial.print(" status="); Serial.print(huidigeStatus);
-    Serial.print(" idx="); Serial.println(raceIndex);
-  }
-
   switch (huidigeStatus) {
 
     case VOLGEN: {
@@ -324,7 +336,6 @@ void runRace() {
 
       if (zwartTel >= 6) {
         if (gemTicks >= eindvlakTicks) {
-          Serial.println(">> EINDVAK tijdens race!");
           logRace('F', raceIndex);
           finishRace();
         } else {
@@ -342,7 +353,6 @@ void runRace() {
 
       if (raceIndex < verkortLengte) {
         char inst = verkortPad[raceIndex++];
-        Serial.print("→ Race "); Serial.print(raceIndex); Serial.print(": "); Serial.println(inst);
         logRace(inst, raceIndex - 1);
 
         if      (inst == 'L') startDraai(-raceSpeed,  raceSpeed);
@@ -350,7 +360,6 @@ void runRace() {
         else if (inst == 'S') huidigeStatus = VOLGEN;
         else if (inst == 'U') startDraai( raceSpeed, -raceSpeed);
       } else {
-        Serial.println(">> Pad op, onverwachte splitsing - rechtdoor");
         logRace('?', raceIndex);
         huidigeStatus = VOLGEN;
       }
@@ -391,22 +400,22 @@ void runRace() {
 
 void finishMapping() {
   remmen();
-
   mappingTijdMs = millis() - startTime;
 
   memcpy(verkortPad, pad, padLengte);
   verkortLengte = padLengte;
   optimaliseerPad(verkortPad, verkortLengte);
 
-  Serial.println("\n=== MAPPING KLAAR ===");
-  Serial.print("Pad ("); Serial.print(padLengte); Serial.print("): ");
-  for (int i = 0; i < padLengte; i++) Serial.print(pad[i]);
-  Serial.println();
-  Serial.print("Verkort ("); Serial.print(verkortLengte); Serial.print("): ");
-  for (int i = 0; i < verkortLengte; i++) Serial.print(verkortPad[i]);
-  Serial.println();
-  Serial.println("\n>> Zet robot terug op start.");
-  Serial.println(">> Zet schakelaar HIGH, dan LOW om race te starten.");
+  preferences.begin("robot-data", false);
+  preferences.putInt("state", 1);
+  preferences.putInt("padLen", padLengte);
+  preferences.putBytes("pad", pad, MAX_PAD_LENGTE);
+  preferences.putInt("vpadLen", verkortLengte);
+  preferences.putBytes("vpad", verkortPad, MAX_PAD_LENGTE);
+  preferences.putULong("mTijd", mappingTijdMs);
+  preferences.putInt("mLogCnt", mappingLogIdx);
+  preferences.putBytes("mLog", mappingLog, sizeof(mappingLog));
+  preferences.end();
 
   huidigeRobotModus = WACHT_RACE;
   vorigeSchakelaarHoog = false;
@@ -414,56 +423,18 @@ void finishMapping() {
 
 void finishRace() {
   remmen();
-
   unsigned long raceTijdMs = millis() - raceStartTime;
+  opgeslagenRaceTijd = raceTijdMs;
 
-  Serial.println("\n=== RACE KLAAR ===");
-  Serial.print("Race tijd: "); Serial.print(raceTijdMs / 1000.0, 2); Serial.println(" sec");
-
-  printAlleData(raceTijdMs);
+  preferences.begin("robot-data", false);
+  preferences.putInt("state", 2);
+  preferences.putULong("rTijd", raceTijdMs);
+  preferences.putInt("rLogCnt", raceLogIdx);
+  preferences.putBytes("rLog", raceLog, sizeof(raceLog));
+  preferences.end();
 
   huidigeRobotModus = KLAAR;
-}
-
-void printAlleData(unsigned long raceTijdMs) {
-  Serial.println("\n========== MAPPING DATA ==========");
-  Serial.print("Mapping tijd: "); Serial.print(mappingTijdMs / 1000.0, 2); Serial.println(" sec");
-  Serial.print("Pad ("); Serial.print(padLengte); Serial.print("): ");
-  for (int i = 0; i < padLengte; i++) Serial.print(pad[i]);
-  Serial.println();
-  Serial.print("Verkort ("); Serial.print(verkortLengte); Serial.print("): ");
-  for (int i = 0; i < verkortLengte; i++) Serial.print(verkortPad[i]);
-  Serial.println();
-
-  Serial.println("\n--- Mapping events ---");
-  Serial.println("Tijd,Event,SensL,SensR,Extra");
-  for (int i = 0; i < mappingLogIdx; i++) {
-    Serial.print(mappingLog[i].tijd); Serial.print(",");
-    Serial.print(mappingLog[i].event); Serial.print(",");
-    Serial.print(mappingLog[i].sensorLinks); Serial.print(",");
-    Serial.print(mappingLog[i].sensorRechts); Serial.print(",");
-    Serial.println(mappingLog[i].extra);
-  }
-
-  Serial.println("\n========== RACE DATA ==========");
-  Serial.print("Race tijd: "); Serial.print(raceTijdMs / 1000.0, 2); Serial.println(" sec");
-  Serial.print("Pad ("); Serial.print(padLengte); Serial.print("): ");
-  for (int i = 0; i < padLengte; i++) Serial.print(pad[i]);
-  Serial.println();
-  Serial.print("Verkort ("); Serial.print(verkortLengte); Serial.print("): ");
-  for (int i = 0; i < verkortLengte; i++) Serial.print(verkortPad[i]);
-  Serial.println();
-
-  Serial.println("\n--- Race events ---");
-  Serial.println("Tijd,Event,SensL,SensR,PadIdx");
-  for (int i = 0; i < raceLogIdx; i++) {
-    Serial.print(raceLog[i].tijd); Serial.print(",");
-    Serial.print(raceLog[i].event); Serial.print(",");
-    Serial.print(raceLog[i].sensorLinks); Serial.print(",");
-    Serial.print(raceLog[i].sensorRechts); Serial.print(",");
-    Serial.println(raceLog[i].extra);
-  }
-  Serial.println("\n========== EINDE ==========");
+  vorigeSchakelaarHoog = false;
 }
 
 // ==========================================
@@ -494,15 +465,10 @@ void startDraai(int spdL, int spdR) {
 void startUTurnMapping() {
   if (padLengte < MAX_PAD_LENGTE) {
     pad[padLengte++] = 'U';
-    Serial.println("→ U-TURN");
     logMapping('U', 0);
   }
   startDraai(baseSpeed, -baseSpeed);
 }
-
-// ==========================================
-// MOTOR CONTROL
-// ==========================================
 
 void rijden(int snelheid, int correctie) {
   setMotorLinks (constrain(snelheid + correctie, -255, 255));
@@ -528,10 +494,6 @@ void remmen() {
   setMotorRechts(0);
 }
 
-// ==========================================
-// EVENT LOGGING
-// ==========================================
-
 void logMapping(char event, int extra) {
   if (mappingLogIdx < MAX_EVENTS) {
     mappingLog[mappingLogIdx] = { millis() - startTime, event,
@@ -548,31 +510,20 @@ void logRace(char event, int padIdx) {
   }
 }
 
-// ==========================================
-// KALIBRATIE
-// ==========================================
-
 void kalibreerRobot() {
   pinMode(2, OUTPUT);
   digitalWrite(2, HIGH);
-  Serial.println("KALIBRATIE...");
   for (uint16_t i = 0; i < 400; i++) {
     if      (i < 100) { setMotorLinks(-kalibSpeed); setMotorRechts( kalibSpeed); }
     else if (i < 200) { setMotorLinks( kalibSpeed); setMotorRechts(-kalibSpeed); }
     else if (i < 300) { setMotorLinks(-kalibSpeed); setMotorRechts( kalibSpeed); }
     else              { setMotorLinks( kalibSpeed); setMotorRechts(-kalibSpeed); }
     qtr.calibrate();
-    if (i % 50 == 0) Serial.print(".");
   }
   remmen();
   digitalWrite(2, LOW);
-  Serial.println("\nKALIBRATIE KLAAR!");
   delay(1000);
 }
-
-// ==========================================
-// PAD OPTIMALISATIE
-// ==========================================
 
 void optimaliseerPad(char* padArray, int &lengte) {
   bool veranderd = true;
