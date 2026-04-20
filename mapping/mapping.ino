@@ -18,6 +18,10 @@ int kalibratieSnelheid = 30;
 int doorrijTicks  = 200;
 int eindvlakTicks = 280;
 
+// --- LED ---
+const int pinLed = 2;
+const unsigned long ledKnipperMs = 100;
+
 // ==========================================
 
 QTRSensors qtr;
@@ -69,6 +73,10 @@ bool lijnVerlaten = false;
 
 bool vorigeSchakelaarHoog = true;
 
+// LED knipperstatus
+unsigned long ledLaatsteWissel = 0;
+bool ledStatus = false;
+
 const int MAX_EVENTS = 200;
 struct EventEntry {
   unsigned long tijd;
@@ -90,9 +98,12 @@ void runRace();
 void finishMapping();
 void finishRace();
 void resetVoorRace();
+void updateLedRace();
 
 void setup() {
   pinMode(pinModeSchakelaar, INPUT_PULLUP);
+  pinMode(pinLed, OUTPUT);
+  digitalWrite(pinLed, LOW);
 
   baseSpeed    = (snelheidMapping    * 255) / 100;
   raceSpeed    = (snelheidRace       * 255) / 100;
@@ -156,6 +167,7 @@ void loop() {
 
   if (huidigeRobotModus == KLAAR) {
     remmen();
+    digitalWrite(pinLed, LOW);
 
     // Edge-detectie: wissen bij overgang HIGH → LOW
     if (vorigeSchakelaarHoog && !schakelaarHoog) {
@@ -170,6 +182,7 @@ void loop() {
 
   if (huidigeRobotModus == WACHT_RACE) {
     remmen();
+    digitalWrite(pinLed, LOW);
     if (vorigeSchakelaarHoog && !schakelaarHoog) {
       resetVoorRace();
       delay(200);
@@ -182,11 +195,18 @@ void loop() {
 
   if (schakelaarHoog) {
     remmen();
+    digitalWrite(pinLed, LOW);
     return;
   }
 
-  if (huidigeRobotModus == MAPPING) runMapping();
-  else if (huidigeRobotModus == RACE) runRace();
+  if (huidigeRobotModus == MAPPING) {
+    digitalWrite(pinLed, LOW);
+    runMapping();
+  }
+  else if (huidigeRobotModus == RACE) {
+    runRace();
+    updateLedRace();
+  }
 }
 
 void resetVoorRace() {
@@ -202,8 +222,35 @@ void resetVoorRace() {
   lijnVerlaten      = false;
   actieStartTijd    = 0;
   raceStartTime     = millis();
+  ledLaatsteWissel  = 0;
+  ledStatus         = false;
 
   qtr.readLineBlack(sensorValues);
+}
+
+// ==========================================
+// LED STURING (alleen in race)
+// ==========================================
+void updateLedRace() {
+  if (huidigeStatus == VOLGEN) {
+    digitalWrite(pinLed, HIGH);
+    ledStatus = true;
+  }
+  else if (huidigeStatus == NAAR_KRUISPUNT
+        || huidigeStatus == DRAAIEN
+        || huidigeStatus == DOORRIJDEN
+        || huidigeStatus == DOORRIJDEN_UTURN) {
+    unsigned long nu = millis();
+    if (nu - ledLaatsteWissel >= ledKnipperMs) {
+      ledStatus = !ledStatus;
+      digitalWrite(pinLed, ledStatus ? HIGH : LOW);
+      ledLaatsteWissel = nu;
+    }
+  }
+  else {
+    digitalWrite(pinLed, LOW);
+    ledStatus = false;
+  }
 }
 
 // ==========================================
@@ -511,8 +558,8 @@ void logRace(char event, int padIdx) {
 }
 
 void kalibreerRobot() {
-  pinMode(2, OUTPUT);
-  digitalWrite(2, HIGH);
+  pinMode(pinLed, OUTPUT);
+  digitalWrite(pinLed, HIGH);
   for (uint16_t i = 0; i < 400; i++) {
     if      (i < 100) { setMotorLinks(-kalibSpeed); setMotorRechts( kalibSpeed); }
     else if (i < 200) { setMotorLinks( kalibSpeed); setMotorRechts(-kalibSpeed); }
@@ -521,7 +568,7 @@ void kalibreerRobot() {
     qtr.calibrate();
   }
   remmen();
-  digitalWrite(2, LOW);
+  digitalWrite(pinLed, LOW);
   delay(1000);
 }
 
