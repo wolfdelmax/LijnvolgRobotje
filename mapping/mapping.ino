@@ -18,15 +18,11 @@ int kalibratieSnelheid = 30;
 int doorrijTicks  = 200;
 int eindvlakTicks = 280;
 
-// --- DRAAI CORRECTIE VARIABELEN ---
-// Stel hier in hoeveel graden de robot MAX mag draaien voordat de correctie triggert.
-// 2.153 ticks per graad (775 ticks / 360°)
-// Aanbevolen: tussen 120° en 170°
-const float TICKS_PER_GRAAD = 2.153;
-int maxDraaiGraden = 150;                                    // ← pas deze waarde aan!
-int draaiTicksMax  = (int)(maxDraaiGraden * TICKS_PER_GRAAD); // wordt automatisch berekend
-int laatsteSpdL = 0;
-int laatsteSpdR = 0;
+// --- MAXIMALE DRAAIHOEK (veiligheid tegen doortollen) ---
+// 1 graad = 2.153 ticks per wiel
+const float ticksPerGraad = 2.153f;
+int  maxDraaiGraden = 180;                      // pas dit aan naar smaak
+long maxDraaiTicks  = (long)(maxDraaiGraden * ticksPerGraad);
 
 // --- LED ---
 const int pinLed = 2;
@@ -81,6 +77,10 @@ bool snapRechts = false;
 unsigned long actieStartTijd = 0;
 bool lijnVerlaten = false;
 
+// --- Draai-encoder snapshot (voor hoekbegrenzing) ---
+long draaiStartTicksL = 0;
+long draaiStartTicksR = 0;
+
 bool vorigeSchakelaarHoog = true;
 
 // LED knipperstatus
@@ -109,6 +109,7 @@ void finishMapping();
 void finishRace();
 void resetVoorRace();
 void updateLedRace();
+bool draaihoekOverschreden();
 
 void setup() {
   pinMode(pinModeSchakelaar, INPUT_PULLUP);
@@ -119,6 +120,9 @@ void setup() {
   raceSpeed    = (snelheidRace       * 255) / 100;
   minBochSpeed = (minBochSnelheid    * 255) / 100;
   kalibSpeed   = (kalibratieSnelheid * 255) / 100;
+
+  // Herbereken voor de zekerheid
+  maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
 
   pinMode(pinAIN1, OUTPUT); pinMode(pinAIN2, OUTPUT);
   pinMode(pinBIN1, OUTPUT); pinMode(pinBIN2, OUTPUT);
@@ -179,7 +183,6 @@ void loop() {
     remmen();
     digitalWrite(pinLed, LOW);
 
-    // Edge-detectie: wissen bij overgang HIGH → LOW
     if (vorigeSchakelaarHoog && !schakelaarHoog) {
       preferences.begin("robot-data", false);
       preferences.clear();
@@ -264,6 +267,19 @@ void updateLedRace() {
 }
 
 // ==========================================
+// DRAAIHOEK BEWAKING
+// ==========================================
+// Encoders tellen altijd op (RISING-only). Bij een draai op de plaats
+// draaien beide wielen ongeveer evenveel, dus gemiddelde van de delta
+// is een goede maat voor de draaihoek in ticks.
+bool draaihoekOverschreden() {
+  long deltaL = encoderTellerL - draaiStartTicksL;
+  long deltaR = encoderTellerR - draaiStartTicksR;
+  long gemiddeld = (deltaL + deltaR) / 2;
+  return gemiddeld >= maxDraaiTicks;
+}
+
+// ==========================================
 // MAPPING STATE MACHINE
 // ==========================================
 void runMapping() {
@@ -328,42 +344,23 @@ void runMapping() {
       break;
     }
 
-    case DRAAIEN: {
+    case DRAAIEN:
       qtr.readLineBlack(sensorValues);
-
-      long afgelegdeDraai = (abs(encoderTellerL) + abs(encoderTellerR)) / 2;
-
-      // --- CORRECTIE: Als we aan het terugdraaien zijn (pad is al 'S'), wacht tot ticks bereikt ---
-      if (padLengte > 0 && pad[padLengte - 1] == 'S' && afgelegdeDraai < draaiTicksMax) {
-        // Nog aan het terugdraaien, niet naar lijndetectie kijken
-        break;
-      }
-      if (padLengte > 0 && pad[padLengte - 1] == 'S' && afgelegdeDraai >= draaiTicksMax) {
-        // Terugdraai klaar → verder rechtdoor rijden
-        huidigeStatus = VOLGEN;
-        break;
-      }
-
-      // --- CORRECTIE: Te ver gedraaid zonder lijn te vinden? ---
-      // Als L of R aftakking was, maar we hebben de max hoek bereikt zonder lijn → terugdraaien
-      if (padLengte > 0 && (pad[padLengte - 1] == 'L' || pad[padLengte - 1] == 'R') && afgelegdeDraai >= draaiTicksMax) {
-        pad[padLengte - 1] = 'S'; // Overschrijf de L/R naar een S (Rechtdoor)
-        logMapping('S', maxDraaiGraden);
-
-        // Start met terugdraaien. Hierdoor beginnen de encoders weer op 0.
-        startDraai(-laatsteSpdL, -laatsteSpdR);
-        break;
-      }
-      // --- EINDE CORRECTIE LOGICA ---
-
       if (!lijnVerlaten) {
         if (sensorValues[3] < 300 && sensorValues[4] < 300) lijnVerlaten = true;
       } else if (sensorValues[3] > 500 || sensorValues[4] > 500) {
         huidigeStatus = VOLGEN;
+        break;
       }
+      // Veiligheid: maximale draaihoek overschreden -> afbreken
+      if (draaihoekOverschreden()) {
+        logMapping('X', maxDraaiGraden);
+        huidigeStatus = VOLGEN;
+        break;
+      }
+      // Tijd-based backup blijft als extra vangnet
       if (millis() - actieStartTijd > 1500) huidigeStatus = VOLGEN;
       break;
-    }
 
     case DOORRIJDEN:
       if ((encoderTellerL + encoderTellerR) / 2 >= doorrijTicks) huidigeStatus = VOLGEN;
@@ -456,6 +453,13 @@ void runRace() {
         if (sensorValues[3] < 300 && sensorValues[4] < 300) lijnVerlaten = true;
       } else if (sensorValues[3] > 500 || sensorValues[4] > 500) {
         huidigeStatus = VOLGEN;
+        break;
+      }
+      // Veiligheid: maximale draaihoek overschreden -> afbreken
+      if (draaihoekOverschreden()) {
+        logRace('X', maxDraaiGraden);
+        huidigeStatus = VOLGEN;
+        break;
       }
       if (millis() - actieStartTijd > 1500) huidigeStatus = VOLGEN;
       break;
@@ -539,18 +543,13 @@ void startNaarKruispunt(int spd) {
 }
 
 void startDraai(int spdL, int spdR) {
-  // Reset de encoders om de draai-afstand schoon te meten
-  encoderTellerL = 0;
-  encoderTellerR = 0;
-
-  // Sla de richtingen op voor een eventuele omkeeractie (correctie)
-  laatsteSpdL = spdL;
-  laatsteSpdR = spdR;
-
   setMotorLinks(spdL);
   setMotorRechts(spdR);
   actieStartTijd = millis();
   lijnVerlaten   = false;
+  // Snapshot van encoder-stand bij start van de draai, voor hoekmeting
+  draaiStartTicksL = encoderTellerL;
+  draaiStartTicksR = encoderTellerR;
   huidigeStatus  = DRAAIEN;
 }
 
