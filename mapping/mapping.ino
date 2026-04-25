@@ -8,7 +8,7 @@ float Kd = 0.007;
 int lastError = 0;
 
 // --- SNELHEID INSTELLINGEN (in procenten) ---
-int snelheidMapping    = 45;
+int snelheidMapping    = 50;
 int minBochSnelheid    = 25;
 int kalibratieSnelheid = 30;
 
@@ -20,7 +20,7 @@ int eindvlakTicks = 280;
 const float ticksPerGraad = 2.135f;
 float maxDraaiGraden = 140.0f;  // max rotatie tijdens DRAAIEN
 const long maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
-int lijnDetectieIdx = 3;        // inner-sensor index voor lijn-detectie tijdens draai
+int lijnDetectieIdx = 2;        // inner-sensor index voor lijn-detectie tijdens draai
                                 // 3 = centrum (3+4), 2 = vroeger (2+5), 1 = nog vroeger (1+6). bv gerbuikt sensore 2 en 5
 int kruispuntDrempel = 4;       // min aantal donkere sensoren voor kruispunt-detectie
 
