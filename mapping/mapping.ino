@@ -18,7 +18,7 @@ int eindvlakTicks = 280;
 
 // --- DRAAIEN ---
 const float ticksPerGraad = 2.135f;
-float maxDraaiGraden = 140.0f;  // max rotatie tijdens DRAAIEN
+float maxDraaiGraden = 155.0f;  // max rotatie tijdens DRAAIEN
 const long maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
 int lijnDetectieIdx = 2;        // inner-sensor index voor lijn-detectie tijdens draai
                                 // 3 = centrum (3+4), 2 = vroeger (2+5), 1 = nog vroeger (1+6). bv gerbuikt sensore 2 en 5
@@ -55,7 +55,7 @@ int baseSpeed, minBochSpeed, kalibSpeed;
 enum RobotModus { MAPPING, KLAAR };
 RobotModus huidigeRobotModus = MAPPING;
 
-enum RobotStatus { VOLGEN, NAAR_KRUISPUNT, DRAAIEN, UTURN, DOORRIJDEN, DOORRIJDEN_UTURN, STOP };
+enum RobotStatus { VOLGEN, NAAR_KRUISPUNT, DRAAIEN, UTURN, DOORRIJDEN_UTURN, STOP };
 RobotStatus huidigeStatus = VOLGEN;
 
 unsigned long startTime     = 0;
@@ -139,7 +139,6 @@ void updateLed() {
   else if (huidigeStatus == NAAR_KRUISPUNT
         || huidigeStatus == DRAAIEN
         || huidigeStatus == UTURN
-        || huidigeStatus == DOORRIJDEN
         || huidigeStatus == DOORRIJDEN_UTURN) {
     unsigned long nu = millis();
     if (nu - ledLaatsteWissel >= ledKnipperMs) {
@@ -259,10 +258,6 @@ void runMapping() {
       }
       break;
     }
-
-    case DOORRIJDEN:
-      if ((encoderTellerL + encoderTellerR) / 2 >= doorrijTicks) huidigeStatus = VOLGEN;
-      break;
 
     case DOORRIJDEN_UTURN:
       setMotorLinks(baseSpeed);
