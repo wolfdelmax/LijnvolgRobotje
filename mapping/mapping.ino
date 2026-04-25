@@ -3,7 +3,7 @@
 // ==========================================
 // --- FINETUNING VARIABELEN ---
 // ==========================================
-float Kp = 0.1;
+float Kp = 0.12;
 float Kd = 0.007;
 int lastError = 0;
 
@@ -13,14 +13,8 @@ int minBochSnelheid    = 25;
 int kalibratieSnelheid = 30;
 
 // --- ENCODER AFSTANDEN ---
-int doorrijTicks  = 200;
+int doorrijTicks  = 150;
 int eindvlakTicks = 280;
-
-// --- MAXIMALE DRAAIHOEK (veiligheid tegen doortollen) ---
-// 1 graad = 2.153 ticks per wiel
-const float ticksPerGraad = 2.153f;
-int  maxDraaiGraden = 180;
-long maxDraaiTicks  = (long)(maxDraaiGraden * ticksPerGraad);
 
 // --- LED ---
 const int pinLed = 2;
@@ -65,10 +59,6 @@ bool snapRechts = false;
 unsigned long actieStartTijd = 0;
 bool lijnVerlaten = false;
 
-// --- Draai-encoder snapshot (voor hoekbegrenzing) ---
-long draaiStartTicksL = 0;
-long draaiStartTicksR = 0;
-
 // LED knipperstatus
 unsigned long ledLaatsteWissel = 0;
 bool ledStatus = false;
@@ -78,7 +68,6 @@ void kalibreerRobot();
 void runMapping();
 void finishMapping();
 void updateLed();
-bool draaihoekOverschreden();
 
 void setup() {
   pinMode(pinModeSchakelaar, INPUT_PULLUP);
@@ -88,9 +77,6 @@ void setup() {
   baseSpeed    = (snelheidMapping    * 255) / 100;
   minBochSpeed = (minBochSnelheid    * 255) / 100;
   kalibSpeed   = (kalibratieSnelheid * 255) / 100;
-
-  // Herbereken voor de zekerheid
-  maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
 
   pinMode(pinAIN1, OUTPUT); pinMode(pinAIN2, OUTPUT);
   pinMode(pinBIN1, OUTPUT); pinMode(pinBIN2, OUTPUT);
@@ -155,16 +141,6 @@ void updateLed() {
     digitalWrite(pinLed, LOW);
     ledStatus = false;
   }
-}
-
-// ==========================================
-// DRAAIHOEK BEWAKING
-// ==========================================
-bool draaihoekOverschreden() {
-  long deltaL = encoderTellerL - draaiStartTicksL;
-  long deltaR = encoderTellerR - draaiStartTicksR;
-  long gemiddeld = (deltaL + deltaR) / 2;
-  return gemiddeld >= maxDraaiTicks;
 }
 
 // ==========================================
@@ -236,16 +212,13 @@ void runMapping() {
       if (!lijnVerlaten) {
         if (sensorValues[3] < 300 && sensorValues[4] < 300) lijnVerlaten = true;
       } else if (sensorValues[3] > 500 || sensorValues[4] > 500) {
+        lastError = 0;
         huidigeStatus = VOLGEN;
-        break;
       }
-      // Veiligheid: maximale draaihoek overschreden -> afbreken
-      if (draaihoekOverschreden()) {
+      if (millis() - actieStartTijd > 1500) {
+        lastError = 0;
         huidigeStatus = VOLGEN;
-        break;
       }
-      // Tijd-based backup blijft als extra vangnet
-      if (millis() - actieStartTijd > 1500) huidigeStatus = VOLGEN;
       break;
 
     case DOORRIJDEN:
@@ -296,9 +269,6 @@ void startDraai(int spdL, int spdR) {
   setMotorRechts(spdR);
   actieStartTijd = millis();
   lijnVerlaten   = false;
-  // Snapshot van encoder-stand bij start van de draai, voor hoekmeting
-  draaiStartTicksL = encoderTellerL;
-  draaiStartTicksR = encoderTellerR;
   huidigeStatus  = DRAAIEN;
 }
 
