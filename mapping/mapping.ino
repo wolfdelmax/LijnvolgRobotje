@@ -18,7 +18,7 @@ int eindvlakTicks = 280;
 
 // --- DRAAIEN ---
 const float ticksPerGraad = 2.135f;
-float maxDraaiGraden = 110.0f;  // max rotatie tijdens DRAAIEN
+float maxDraaiGraden = 120.0f;  // max rotatie tijdens DRAAIEN
 const long maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
 
 // --- LED ---
@@ -52,7 +52,7 @@ int baseSpeed, minBochSpeed, kalibSpeed;
 enum RobotModus { MAPPING, KLAAR };
 RobotModus huidigeRobotModus = MAPPING;
 
-enum RobotStatus { VOLGEN, NAAR_KRUISPUNT, DRAAIEN, DOORRIJDEN, DOORRIJDEN_UTURN, STOP };
+enum RobotStatus { VOLGEN, NAAR_KRUISPUNT, DRAAIEN, UTURN, DOORRIJDEN, DOORRIJDEN_UTURN, STOP };
 RobotStatus huidigeStatus = VOLGEN;
 
 unsigned long startTime     = 0;
@@ -135,6 +135,7 @@ void updateLed() {
   }
   else if (huidigeStatus == NAAR_KRUISPUNT
         || huidigeStatus == DRAAIEN
+        || huidigeStatus == UTURN
         || huidigeStatus == DOORRIJDEN
         || huidigeStatus == DOORRIJDEN_UTURN) {
     unsigned long nu = millis();
@@ -215,11 +216,11 @@ void runMapping() {
     }
 
     case DRAAIEN: {
-      qtr.readLineBlack(sensorValues);
+      uint16_t draaiPositie = qtr.readLineBlack(sensorValues);
       if (!lijnVerlaten) {
         if (sensorValues[3] < 300 && sensorValues[4] < 300) lijnVerlaten = true;
       } else if (sensorValues[3] > 500 || sensorValues[4] > 500) {
-        lastError = 0;
+        lastError = (int)draaiPositie - 3500;
         huidigeStatus = VOLGEN;
         break;
       }
@@ -241,6 +242,17 @@ void runMapping() {
       }
       if (millis() - actieStartTijd > 1500) {
         lastError = 0;
+        huidigeStatus = VOLGEN;
+      }
+      break;
+    }
+
+    case UTURN: {
+      uint16_t uPositie = qtr.readLineBlack(sensorValues);
+      if (!lijnVerlaten) {
+        if (sensorValues[3] < 300 && sensorValues[4] < 300) lijnVerlaten = true;
+      } else if (sensorValues[3] > 500 || sensorValues[4] > 500) {
+        lastError = (int)uPositie - 3500;
         huidigeStatus = VOLGEN;
       }
       break;
@@ -302,7 +314,10 @@ void startDraai(int spdL, int spdR) {
 }
 
 void startUTurnMapping() {
-  startDraai(baseSpeed, -baseSpeed);
+  setMotorLinks(baseSpeed);
+  setMotorRechts(-baseSpeed);
+  lijnVerlaten = false;
+  huidigeStatus = UTURN;
 }
 
 void rijden(int snelheid, int correctie) {
