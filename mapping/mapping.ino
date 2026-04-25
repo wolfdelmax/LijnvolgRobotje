@@ -13,12 +13,12 @@ int minBochSnelheid    = 25;
 int kalibratieSnelheid = 30;
 
 // --- ENCODER AFSTANDEN ---
-int doorrijTicks  = 150;
+int doorrijTicks  = 125;
 int eindvlakTicks = 280;
 
 // --- DRAAIEN ---
 const float ticksPerGraad = 2.135f;
-float maxDraaiGraden = 120.0f;  // max rotatie tijdens DRAAIEN
+float maxDraaiGraden = 140.0f;  // max rotatie tijdens DRAAIEN
 const long maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
 
 // --- LED ---
@@ -225,24 +225,19 @@ void runMapping() {
         break;
       }
       long draaiTicks = (encoderTellerL + encoderTellerR) / 2;
-      long limietTicks = draaiTeruggedraaid ? (long)(2 * maxDraaiTicks) : maxDraaiTicks;
-      if (draaiTicks >= limietTicks) {
-        if (!draaiTeruggedraaid) {
+      if (!draaiTeruggedraaid && draaiTicks >= maxDraaiTicks) {
+        bool lijnZichtbaar = false;
+        for (int i = 1; i <= 6; i++) if (sensorValues[i] > 500) { lijnZichtbaar = true; break; }
+        if (lijnZichtbaar) {
+          lastError = (int)draaiPositie - 3500;
+          huidigeStatus = VOLGEN;
+        } else {
           encoderTellerL = encoderTellerR = 0;
           setMotorLinks(-draaiSpdL);
           setMotorRechts(-draaiSpdR);
           draaiTeruggedraaid = true;
           lijnVerlaten = false;
-          actieStartTijd = millis();
-        } else {
-          lastError = 0;
-          huidigeStatus = VOLGEN;
         }
-        break;
-      }
-      if (millis() - actieStartTijd > 1500) {
-        lastError = 0;
-        huidigeStatus = VOLGEN;
       }
       break;
     }
