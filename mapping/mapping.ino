@@ -3,12 +3,12 @@
 // ==========================================
 // --- FINETUNING VARIABELEN ---
 // ==========================================
-float Kp = 0.12;
+float Kp = 0.125;
 float Kd = 0.007;
 int lastError = 0;
 
 // --- SNELHEID INSTELLINGEN (in procenten) ---
-int snelheidMapping    = 40;
+int snelheidMapping    = 45;
 int minBochSnelheid    = 25;
 int kalibratieSnelheid = 30;
 
@@ -21,7 +21,8 @@ const float ticksPerGraad = 2.135f;
 float maxDraaiGraden = 140.0f;  // max rotatie tijdens DRAAIEN
 const long maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
 int lijnDetectieIdx = 3;        // inner-sensor index voor lijn-detectie tijdens draai
-                                // 3 = centrum (3+4), 2 = vroeger (2+5), 1 = nog vroeger (1+6)
+                                // 3 = centrum (3+4), 2 = vroeger (2+5), 1 = nog vroeger (1+6). bv gerbuikt sensore 2 en 5
+int kruispuntDrempel = 4;       // min aantal donkere sensoren voor kruispunt-detectie
 
 // --- LED ---
 const int pinLed = 2;
@@ -162,8 +163,10 @@ void runMapping() {
   switch (huidigeStatus) {
 
     case VOLGEN: {
-      bool bL = (sensorValues[0] > 600 || sensorValues[1] > 600);
-      bool bR = (sensorValues[6] > 600 || sensorValues[7] > 600);
+      int donkerTel = 0;
+      for (int i = 0; i < SensorCount; i++) if (sensorValues[i] > 600) donkerTel++;
+      bool bL = (sensorValues[0] > 600 || sensorValues[1] > 600) && donkerTel >= kruispuntDrempel;
+      bool bR = (sensorValues[6] > 600 || sensorValues[7] > 600) && donkerTel >= kruispuntDrempel;
 
       if (bL || bR) {
         snapLinks = bL; snapRechts = bR;
