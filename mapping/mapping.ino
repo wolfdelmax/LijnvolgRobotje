@@ -8,19 +8,20 @@ float Kd = 0.007;
 int lastError = 0;
 
 // --- SNELHEID INSTELLINGEN (in procenten) ---
-int snelheidMapping    = 50;
+int snelheidMapping    = 55;
 int minBochSnelheid    = 25;
 int kalibratieSnelheid = 30;
+int snelheidDraaien    = 40;  // rotatiesnelheid voor DRAAIEN en UTURN
 
 // --- ENCODER AFSTANDEN ---
-int doorrijTicks  = 125;
+int doorrijTicks  = 120;
 int eindvlakTicks = 280;
 
 // --- DRAAIEN ---
 const float ticksPerGraad = 2.135f;
 float maxDraaiGraden = 155.0f;  // max rotatie tijdens DRAAIEN
 const long maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
-int lijnDetectieIdx = 2;        // inner-sensor index voor lijn-detectie tijdens draai
+int lijnDetectieIdx = 1;        // inner-sensor index voor lijn-detectie tijdens draai
                                 // 3 = centrum (3+4), 2 = vroeger (2+5), 1 = nog vroeger (1+6). bv gerbuikt sensore 2 en 5
 int kruispuntDrempel = 4;       // min aantal donkere sensoren voor kruispunt-detectie
 
@@ -50,7 +51,7 @@ void IRAM_ATTR encoderISR_R() { encoderTellerR++; }
 
 const int pinModeSchakelaar = 1;
 
-int baseSpeed, minBochSpeed, kalibSpeed;
+int baseSpeed, minBochSpeed, kalibSpeed, draaiSpeed;
 
 enum RobotModus { MAPPING, KLAAR };
 RobotModus huidigeRobotModus = MAPPING;
@@ -87,6 +88,7 @@ void setup() {
   baseSpeed    = (snelheidMapping    * 255) / 100;
   minBochSpeed = (minBochSnelheid    * 255) / 100;
   kalibSpeed   = (kalibratieSnelheid * 255) / 100;
+  draaiSpeed   = (snelheidDraaien    * 255) / 100;
 
   pinMode(pinAIN1, OUTPUT); pinMode(pinAIN2, OUTPUT);
   pinMode(pinBIN1, OUTPUT); pinMode(pinBIN2, OUTPUT);
@@ -212,9 +214,9 @@ void runMapping() {
 
       bool kanS = (sensorValues[3] > 600 || sensorValues[4] > 600);
 
-      if (snapLinks)       { startDraai(-baseSpeed, baseSpeed); }
+      if (snapLinks)       { startDraai(-draaiSpeed, draaiSpeed); }
       else if (kanS)       { huidigeStatus = VOLGEN; }
-      else if (snapRechts) { startDraai(baseSpeed, -baseSpeed); }
+      else if (snapRechts) { startDraai(draaiSpeed, -draaiSpeed); }
       else                 { startUTurnMapping(); }
       break;
     }
@@ -311,8 +313,8 @@ void startDraai(int spdL, int spdR) {
 }
 
 void startUTurnMapping() {
-  setMotorLinks(baseSpeed);
-  setMotorRechts(-baseSpeed);
+  setMotorLinks(draaiSpeed);
+  setMotorRechts(-draaiSpeed);
   lijnVerlaten = false;
   huidigeStatus = UTURN;
 }
