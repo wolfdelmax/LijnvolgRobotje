@@ -20,6 +20,8 @@ int eindvlakTicks = 280;
 const float ticksPerGraad = 2.135f;
 float maxDraaiGraden = 140.0f;  // max rotatie tijdens DRAAIEN
 const long maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
+int lijnDetectieIdx = 3;        // inner-sensor index voor lijn-detectie tijdens draai
+                                // 3 = centrum (3+4), 2 = vroeger (2+5), 1 = nog vroeger (1+6)
 
 // --- LED ---
 const int pinLed = 2;
@@ -217,10 +219,11 @@ void runMapping() {
 
     case DRAAIEN: {
       uint16_t draaiPositie = qtr.readLineBlack(sensorValues);
+      int idxL = lijnDetectieIdx, idxR = 7 - lijnDetectieIdx;
       if (!lijnVerlaten) {
-        if (sensorValues[3] < 300 && sensorValues[4] < 300) lijnVerlaten = true;
-      } else if (sensorValues[3] > 500 || sensorValues[4] > 500) {
-        lastError = (int)draaiPositie - 3500;
+        if (sensorValues[idxL] < 300 && sensorValues[idxR] < 300) lijnVerlaten = true;
+      } else if (sensorValues[idxL] > 500 || sensorValues[idxR] > 500) {
+        lastError = 0;
         huidigeStatus = VOLGEN;
         break;
       }
@@ -229,7 +232,7 @@ void runMapping() {
         bool lijnZichtbaar = false;
         for (int i = 1; i <= 6; i++) if (sensorValues[i] > 500) { lijnZichtbaar = true; break; }
         if (lijnZichtbaar) {
-          lastError = (int)draaiPositie - 3500;
+          lastError = 0;
           huidigeStatus = VOLGEN;
         } else {
           encoderTellerL = encoderTellerR = 0;
@@ -244,10 +247,11 @@ void runMapping() {
 
     case UTURN: {
       uint16_t uPositie = qtr.readLineBlack(sensorValues);
+      int idxL = lijnDetectieIdx, idxR = 7 - lijnDetectieIdx;
       if (!lijnVerlaten) {
-        if (sensorValues[3] < 300 && sensorValues[4] < 300) lijnVerlaten = true;
-      } else if (sensorValues[3] > 500 || sensorValues[4] > 500) {
-        lastError = (int)uPositie - 3500;
+        if (sensorValues[idxL] < 300 && sensorValues[idxR] < 300) lijnVerlaten = true;
+      } else if (sensorValues[idxL] > 500 || sensorValues[idxR] > 500) {
+        lastError = 0;
         huidigeStatus = VOLGEN;
       }
       break;
