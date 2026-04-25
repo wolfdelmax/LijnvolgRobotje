@@ -16,6 +16,11 @@ int kalibratieSnelheid = 30;
 int doorrijTicks  = 150;
 int eindvlakTicks = 280;
 
+// --- DRAAIEN ---
+const float ticksPerGraad = 2.135f;
+float maxDraaiGraden = 110.0f;  // max rotatie tijdens DRAAIEN
+const long maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
+
 // --- LED ---
 const int pinLed = 2;
 const unsigned long ledKnipperMs = 100;
@@ -58,6 +63,8 @@ bool snapRechts = false;
 
 unsigned long actieStartTijd = 0;
 bool lijnVerlaten = false;
+int  draaiSpdL = 0, draaiSpdR = 0;
+bool draaiTeruggedraaid = false;
 
 // LED knipperstatus
 unsigned long ledLaatsteWissel = 0;
@@ -207,19 +214,37 @@ void runMapping() {
       break;
     }
 
-    case DRAAIEN:
+    case DRAAIEN: {
       qtr.readLineBlack(sensorValues);
       if (!lijnVerlaten) {
         if (sensorValues[3] < 300 && sensorValues[4] < 300) lijnVerlaten = true;
       } else if (sensorValues[3] > 500 || sensorValues[4] > 500) {
         lastError = 0;
         huidigeStatus = VOLGEN;
+        break;
+      }
+      long draaiTicks = (encoderTellerL + encoderTellerR) / 2;
+      long limietTicks = draaiTeruggedraaid ? (long)(2 * maxDraaiTicks) : maxDraaiTicks;
+      if (draaiTicks >= limietTicks) {
+        if (!draaiTeruggedraaid) {
+          encoderTellerL = encoderTellerR = 0;
+          setMotorLinks(-draaiSpdL);
+          setMotorRechts(-draaiSpdR);
+          draaiTeruggedraaid = true;
+          lijnVerlaten = false;
+          actieStartTijd = millis();
+        } else {
+          lastError = 0;
+          huidigeStatus = VOLGEN;
+        }
+        break;
       }
       if (millis() - actieStartTijd > 1500) {
         lastError = 0;
         huidigeStatus = VOLGEN;
       }
       break;
+    }
 
     case DOORRIJDEN:
       if ((encoderTellerL + encoderTellerR) / 2 >= doorrijTicks) huidigeStatus = VOLGEN;
@@ -265,6 +290,10 @@ void startNaarKruispunt(int spd) {
 }
 
 void startDraai(int spdL, int spdR) {
+  encoderTellerL = encoderTellerR = 0;
+  draaiSpdL = spdL;
+  draaiSpdR = spdR;
+  draaiTeruggedraaid = false;
   setMotorLinks(spdL);
   setMotorRechts(spdR);
   actieStartTijd = millis();
