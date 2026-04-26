@@ -8,7 +8,7 @@ float Kd = 0.007;
 int lastError = 0;
 
 // --- SNELHEID INSTELLINGEN (in procenten) ---
-int snelheidMapping    = 55;
+int snelheidMapping    = 50;
 int minBochSnelheid    = 25;
 int kalibratieSnelheid = 30;
 int snelheidDraaien    = 40;  // rotatiesnelheid voor DRAAIEN en UTURN
