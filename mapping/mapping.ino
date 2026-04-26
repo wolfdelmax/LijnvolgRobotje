@@ -21,9 +21,10 @@ int eindvlakTicks = 280;
 const float ticksPerGraad = 2.135f;
 float maxDraaiGraden = 155.0f;  // max rotatie tijdens DRAAIEN
 const long maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
-int lijnDetectieIdx = 1;        // inner-sensor index voor lijn-detectie tijdens draai
+int lijnDetectieIdx = 2;        // inner-sensor index voor lijn-detectie tijdens draai
                                 // 3 = centrum (3+4), 2 = vroeger (2+5), 1 = nog vroeger (1+6). bv gerbuikt sensore 2 en 5
 int kruispuntDrempel = 4;       // min aantal donkere sensoren voor kruispunt-detectie
+int donkerDrempel    = 600;     // sensor-waarde drempel om "donker" te zijn
 
 // --- LED ---
 const int pinLed = 2;
@@ -157,9 +158,9 @@ void runMapping() {
 
     case VOLGEN: {
       int donkerTel = 0;
-      for (int i = 0; i < SensorCount; i++) if (sensorValues[i] > 600) donkerTel++;
-      bool bL = (sensorValues[0] > 600 || sensorValues[1] > 600) && donkerTel >= kruispuntDrempel;
-      bool bR = (sensorValues[6] > 600 || sensorValues[7] > 600) && donkerTel >= kruispuntDrempel;
+      for (int i = 0; i < SensorCount; i++) if (sensorValues[i] > donkerDrempel) donkerTel++;
+      bool bL = (sensorValues[0] > donkerDrempel || sensorValues[1] > donkerDrempel) && donkerTel >= kruispuntDrempel;
+      bool bR = (sensorValues[6] > donkerDrempel || sensorValues[7] > donkerDrempel) && donkerTel >= kruispuntDrempel;
 
       if (bL || bR) {
         snapLinks = bL; snapRechts = bR;
@@ -181,11 +182,11 @@ void runMapping() {
     }
 
     case NAAR_KRUISPUNT: {
-      if (sensorValues[0] > 600 || sensorValues[1] > 600) snapLinks  = true;
-      if (sensorValues[6] > 600 || sensorValues[7] > 600) snapRechts = true;
+      if (sensorValues[0] > donkerDrempel || sensorValues[1] > donkerDrempel) snapLinks  = true;
+      if (sensorValues[6] > donkerDrempel || sensorValues[7] > donkerDrempel) snapRechts = true;
 
       int zwartTel = 0;
-      for (int i = 0; i < SensorCount; i++) if (sensorValues[i] > 600) zwartTel++;
+      for (int i = 0; i < SensorCount; i++) if (sensorValues[i] > donkerDrempel) zwartTel++;
       long gemTicks = (encoderTellerL + encoderTellerR) / 2;
 
       if (zwartTel >= 6) {
@@ -204,7 +205,7 @@ void runMapping() {
         break;
       }
 
-      bool kanS = (sensorValues[3] > 600 || sensorValues[4] > 600);
+      bool kanS = (sensorValues[3] > donkerDrempel || sensorValues[4] > donkerDrempel);
 
       if (altijdRechts) {
         if (snapRechts)      { startDraai(draaiSpeed, -draaiSpeed); }
@@ -223,14 +224,17 @@ void runMapping() {
     case DRAAIEN: {
       uint16_t draaiPositie = qtr.readLineBlack(sensorValues);
       int idxL = lijnDetectieIdx, idxR = 7 - lijnDetectieIdx;
-      if (!lijnVerlaten) {
-        if (sensorValues[idxL] < 300 && sensorValues[idxR] < 300) lijnVerlaten = true;
-      } else if (sensorValues[idxL] > 500 || sensorValues[idxR] > 500) {
-        lastError = 0;
-        huidigeStatus = VOLGEN;
-        break;
-      }
       long draaiTicks = (encoderTellerL + encoderTellerR) / 2;
+      const long minDraaiTicks = (long)(30 * ticksPerGraad);
+      if (draaiTicks >= minDraaiTicks) {
+        if (!lijnVerlaten) {
+          if (sensorValues[idxL] < 300 && sensorValues[idxR] < 300) lijnVerlaten = true;
+        } else if (sensorValues[idxL] > 500 || sensorValues[idxR] > 500) {
+          lastError = 0;
+          huidigeStatus = VOLGEN;
+          break;
+        }
+      }
       if (!draaiTeruggedraaid && draaiTicks >= maxDraaiTicks) {
         bool lijnZichtbaar = false;
         for (int i = 1; i <= 6; i++) if (sensorValues[i] > 500) { lijnZichtbaar = true; break; }
