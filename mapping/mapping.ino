@@ -1,4 +1,6 @@
 #include <QTRSensors.h>
+#include <Wire.h>
+#include <Adafruit_VL6180X.h>
 
 // ==========================================
 // --- FINETUNING VARIABELEN ---
@@ -26,6 +28,15 @@ int lijnDetectieIdx = 2;        // inner-sensor index voor lijn-detectie tijdens
 int kruispuntDrempel = 4;       // min aantal donkere sensoren voor kruispunt-detectie
 int donkerDrempel    = 600;     // sensor-waarde drempel om "donker" te zijn
 
+// --- OBSTAKEL OMZEILEN (VL6180X ToF) ---
+int   omzeilDrempelMm     = 120;    // afstand (mm) waarbij robot begint uit te wijken
+float omzeilHoekUit       = 70.0f;  // graden eerste draai (rechts weg van obstakel)
+float omzeilHoekTerug     = 75.0f;  // graden tweede draai (links terug naar lijn)
+int   omzeilZijTicks      = 700;    // ticks rechtdoor langs het obstakel (empirisch getuned)
+int   omzeilSnelheid      = 45;     // procent — snelheid voor de hele uitwijk-procedure
+int   omzeilLijnMinTicks  = 450;    // pas vanaf deze ticks in NAAR_LIJN naar lijn zoeken
+unsigned long omzeilCooldownMs = 2000; // tijd na omzeilen voor opnieuw mag triggeren
+
 // --- LED ---
 const int pinLed = 2;
 const unsigned long ledKnipperMs = 100;
@@ -33,6 +44,10 @@ const unsigned long ledKnipperMs = 100;
 // ==========================================
 
 QTRSensors qtr;
+Adafruit_VL6180X tof = Adafruit_VL6180X();
+bool tofBeschikbaar = false;
+uint8_t laatsteAfstandMm = 255;
+unsigned long laatsteOmzeilTijd = 0;
 
 const uint8_t SensorCount = 8;
 uint16_t sensorValues[SensorCount];
@@ -53,13 +68,16 @@ void IRAM_ATTR encoderISR_R() { encoderTellerR++; }
 const int pinModeSchakelaar = 1;
 const int pinBoot = 0;  // BOOT-knop: ingedrukt bij opstart = always-right modus
 
-int baseSpeed, minBochSpeed, kalibSpeed, draaiSpeed;
+int baseSpeed, minBochSpeed, kalibSpeed, draaiSpeed, omzeilSpeed;
 bool altijdRechts = false;
 
 enum RobotModus { MAPPING, KLAAR };
 RobotModus huidigeRobotModus = MAPPING;
 
-enum RobotStatus { VOLGEN, NAAR_KRUISPUNT, DRAAIEN, UTURN, DOORRIJDEN_UTURN, STOP };
+enum RobotStatus {
+  VOLGEN, NAAR_KRUISPUNT, DRAAIEN, UTURN, DOORRIJDEN_UTURN, STOP,
+  OBSTAKEL_DRAAI_UIT, OBSTAKEL_LANGS, OBSTAKEL_DRAAI_TERUG, OBSTAKEL_NAAR_LIJN
+};
 RobotStatus huidigeStatus = VOLGEN;
 
 unsigned long startTime     = 0;
@@ -82,6 +100,8 @@ void kalibreerRobot();
 void runMapping();
 void finishMapping();
 void updateLed();
+void leesTof();
+void startObstakelOmzeilen();
 
 void setup() {
   pinMode(pinModeSchakelaar, INPUT_PULLUP);
@@ -100,6 +120,7 @@ void setup() {
   minBochSpeed = (minBochSnelheid    * 255) / 100;
   kalibSpeed   = (kalibratieSnelheid * 255) / 100;
   draaiSpeed   = (snelheidDraaien    * 255) / 100;
+  omzeilSpeed  = (omzeilSnelheid     * 255) / 100;
 
   pinMode(pinAIN1, OUTPUT); pinMode(pinAIN2, OUTPUT);
   pinMode(pinBIN1, OUTPUT); pinMode(pinBIN2, OUTPUT);
@@ -113,6 +134,12 @@ void setup() {
 
   qtr.setTypeRC();
   qtr.setSensorPins(sensorPinnen, SensorCount);
+
+  Wire.begin(21, 22);
+  tofBeschikbaar = tof.begin();
+  if (tofBeschikbaar) {
+    tof.startRangeContinuous(50);
+  }
 
   huidigeRobotModus = MAPPING;
   kalibreerRobot();
@@ -153,10 +180,18 @@ void updateLed() {
 // ==========================================
 void runMapping() {
   uint16_t positie = qtr.readLineBlack(sensorValues);
+  leesTof();
 
   switch (huidigeStatus) {
 
     case VOLGEN: {
+      if (tofBeschikbaar
+          && laatsteAfstandMm < omzeilDrempelMm
+          && (millis() - laatsteOmzeilTijd) > omzeilCooldownMs) {
+        startObstakelOmzeilen();
+        break;
+      }
+
       int donkerTel = 0;
       for (int i = 0; i < SensorCount; i++) if (sensorValues[i] > donkerDrempel) donkerTel++;
       bool bL = (sensorValues[0] > donkerDrempel || sensorValues[1] > donkerDrempel) && donkerTel >= kruispuntDrempel;
@@ -270,6 +305,67 @@ void runMapping() {
       if ((encoderTellerL + encoderTellerR) / 2 >= doorrijTicks) startUTurnMapping();
       break;
 
+    case OBSTAKEL_DRAAI_UIT: {
+      long ticks = (encoderTellerL + encoderTellerR) / 2;
+      long doelTicks = (long)(omzeilHoekUit * ticksPerGraad);
+      if (ticks >= doelTicks) {
+        encoderTellerL = encoderTellerR = 0;
+        setMotorLinks(omzeilSpeed);
+        setMotorRechts(omzeilSpeed);
+        huidigeStatus = OBSTAKEL_LANGS;
+      }
+      break;
+    }
+
+    case OBSTAKEL_LANGS: {
+      long ticks = (encoderTellerL + encoderTellerR) / 2;
+      if (ticks >= omzeilZijTicks) {
+        encoderTellerL = encoderTellerR = 0;
+        setMotorLinks(-omzeilSpeed);
+        setMotorRechts(omzeilSpeed);
+        huidigeStatus = OBSTAKEL_DRAAI_TERUG;
+      }
+      break;
+    }
+
+    case OBSTAKEL_DRAAI_TERUG: {
+      long ticks = (encoderTellerL + encoderTellerR) / 2;
+      long doelTicks = (long)(omzeilHoekTerug * ticksPerGraad);
+      if (ticks >= doelTicks) {
+        encoderTellerL = encoderTellerR = 0;
+        setMotorLinks(omzeilSpeed);
+        setMotorRechts(omzeilSpeed);
+        huidigeStatus = OBSTAKEL_NAAR_LIJN;
+      }
+      break;
+    }
+
+    case OBSTAKEL_NAAR_LIJN: {
+      long ticks = (encoderTellerL + encoderTellerR) / 2;
+
+      // Pas vanaf omzeilLijnMinTicks naar de lijn kijken (vermijdt false positives van cilinderrand).
+      if (ticks >= omzeilLijnMinTicks) {
+        bool lijnGezien = sensorValues[0] > donkerDrempel
+                       || sensorValues[1] > donkerDrempel
+                       || sensorValues[2] > donkerDrempel
+                       || sensorValues[3] > donkerDrempel;
+        if (lijnGezien) {
+          lastError = 0;
+          laatsteOmzeilTijd = millis();
+          huidigeStatus = VOLGEN;
+          break;
+        }
+      }
+
+      // Timeout: na omzeilZijTicks toch terug naar VOLGEN, ook zonder lijn.
+      if (ticks >= omzeilZijTicks) {
+        lastError = 0;
+        laatsteOmzeilTijd = millis();
+        huidigeStatus = VOLGEN;
+      }
+      break;
+    }
+
     case STOP:
       remmen();
       break;
@@ -320,6 +416,23 @@ void startUTurnMapping() {
   setMotorRechts(-draaiSpeed);
   lijnVerlaten = false;
   huidigeStatus = UTURN;
+}
+
+void leesTof() {
+  if (!tofBeschikbaar) return;
+  if (tof.isRangeComplete()) {
+    uint8_t r = tof.readRangeResult();
+    if (tof.readRangeStatus() == VL6180X_ERROR_NONE) {
+      laatsteAfstandMm = r;
+    }
+  }
+}
+
+void startObstakelOmzeilen() {
+  encoderTellerL = encoderTellerR = 0;
+  setMotorLinks(omzeilSpeed);
+  setMotorRechts(-omzeilSpeed);
+  huidigeStatus = OBSTAKEL_DRAAI_UIT;
 }
 
 void rijden(int snelheid, int correctie) {
