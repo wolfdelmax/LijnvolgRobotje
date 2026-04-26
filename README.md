@@ -58,6 +58,3 @@ Als de VL6180X niet gedetecteerd wordt bij opstart blijft de obstakellogica uit 
 ### Vereiste library
 
 In de Arduino IDE installeren via Library Manager: **Adafruit VL6180X**.
-
-
-50 procent : mapping 26041038 (dagmaanduur)
