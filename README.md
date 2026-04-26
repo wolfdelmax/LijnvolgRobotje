@@ -1,14 +1,3 @@
--verschillen padsoorten
--momenteel enkel D
-PID log
+Na opstarten led flikkert en dan heb je 2 sec om always left of always right te kiezen. druk boot voor always right, anders always left
 
-kp =0.05
-kd = 1
-ging zeer vlot enkel in de 90 graden heo slingert hij eruit 
-
-kp = 0.2 veel te hoog dit effect wordt geamplifeerd 
-kd = 1
-
-kp = 0.03 veel te traag
-kd = 1.5
-
+50 procent : mapping 26041038
