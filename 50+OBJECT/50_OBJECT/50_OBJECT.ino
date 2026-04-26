@@ -31,9 +31,9 @@ int donkerDrempel    = 600;     // sensor-waarde drempel om "donker" te zijn
 // --- OBSTAKEL OMZEILEN (VL6180X ToF) ---
 int   omzeilDrempelMm     = 120;    // afstand (mm) waarbij robot begint uit te wijken
 float omzeilHoekUit       = 70.0f;  // graden eerste draai (rechts weg van obstakel)
-float omzeilHoekTerug     = 75.0f;  // graden tweede draai (links terug naar lijn)
+float omzeilHoekTerug     = 70.0f;  // graden tweede draai (links terug naar lijn)
 int   omzeilZijTicks      = 700;    // ticks rechtdoor langs het obstakel (empirisch getuned)
-int   omzeilSnelheid      = 45;     // procent — snelheid voor de hele uitwijk-procedure
+int   omzeilSnelheid      = 60;     // procent — snelheid voor de hele uitwijk-procedure
 int   omzeilLijnMinTicks  = 450;    // pas vanaf deze ticks in NAAR_LIJN naar lijn zoeken
 unsigned long omzeilCooldownMs = 2000; // tijd na omzeilen voor opnieuw mag triggeren
 
