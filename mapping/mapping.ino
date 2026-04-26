@@ -14,7 +14,7 @@ int kalibratieSnelheid = 30;
 int snelheidDraaien    = 40;  // rotatiesnelheid voor DRAAIEN en UTURN
 
 // --- ENCODER AFSTANDEN ---
-int doorrijTicks  = 120;
+int doorrijTicks  = 125;
 int eindvlakTicks = 280;
 
 // --- DRAAIEN ---
@@ -50,8 +50,10 @@ void IRAM_ATTR encoderISR_L() { encoderTellerL++; }
 void IRAM_ATTR encoderISR_R() { encoderTellerR++; }
 
 const int pinModeSchakelaar = 1;
+const int pinBoot = 0;  // BOOT-knop: ingedrukt bij opstart = always-right modus
 
 int baseSpeed, minBochSpeed, kalibSpeed, draaiSpeed;
+bool altijdRechts = false;
 
 enum RobotModus { MAPPING, KLAAR };
 RobotModus huidigeRobotModus = MAPPING;
@@ -82,8 +84,16 @@ void updateLed();
 
 void setup() {
   pinMode(pinModeSchakelaar, INPUT_PULLUP);
+  pinMode(pinBoot, INPUT_PULLUP);
   pinMode(pinLed, OUTPUT);
-  digitalWrite(pinLed, LOW);
+
+  // Modus-keuze venster: 2s lang LED snel knipperen, BOOT indrukken = always-right
+  unsigned long modusEinde = millis() + 2000;
+  while (millis() < modusEinde) {
+    digitalWrite(pinLed, (millis() / 100) % 2);
+    if (digitalRead(pinBoot) == LOW) altijdRechts = true;
+  }
+  digitalWrite(pinLed, altijdRechts ? LOW : HIGH);
 
   baseSpeed    = (snelheidMapping    * 255) / 100;
   minBochSpeed = (minBochSnelheid    * 255) / 100;
@@ -114,13 +124,13 @@ void loop() {
 
   if (huidigeRobotModus == KLAAR) {
     remmen();
-    digitalWrite(pinLed, LOW);
+    digitalWrite(pinLed, altijdRechts ? LOW : HIGH);
     return;
   }
 
   if (schakelaarHoog) {
     remmen();
-    digitalWrite(pinLed, LOW);
+    digitalWrite(pinLed, altijdRechts ? LOW : HIGH);
     return;
   }
 
@@ -134,25 +144,7 @@ void loop() {
 // LED STURING
 // ==========================================
 void updateLed() {
-  if (huidigeStatus == VOLGEN) {
-    digitalWrite(pinLed, HIGH);
-    ledStatus = true;
-  }
-  else if (huidigeStatus == NAAR_KRUISPUNT
-        || huidigeStatus == DRAAIEN
-        || huidigeStatus == UTURN
-        || huidigeStatus == DOORRIJDEN_UTURN) {
-    unsigned long nu = millis();
-    if (nu - ledLaatsteWissel >= ledKnipperMs) {
-      ledStatus = !ledStatus;
-      digitalWrite(pinLed, ledStatus ? HIGH : LOW);
-      ledLaatsteWissel = nu;
-    }
-  }
-  else {
-    digitalWrite(pinLed, LOW);
-    ledStatus = false;
-  }
+  digitalWrite(pinLed, altijdRechts ? LOW : HIGH);
 }
 
 // ==========================================
@@ -214,10 +206,17 @@ void runMapping() {
 
       bool kanS = (sensorValues[3] > 600 || sensorValues[4] > 600);
 
-      if (snapLinks)       { startDraai(-draaiSpeed, draaiSpeed); }
-      else if (kanS)       { huidigeStatus = VOLGEN; }
-      else if (snapRechts) { startDraai(draaiSpeed, -draaiSpeed); }
-      else                 { startUTurnMapping(); }
+      if (altijdRechts) {
+        if (snapRechts)      { startDraai(draaiSpeed, -draaiSpeed); }
+        else if (kanS)       { huidigeStatus = VOLGEN; }
+        else if (snapLinks)  { startDraai(-draaiSpeed, draaiSpeed); }
+        else                 { startUTurnMapping(); }
+      } else {
+        if (snapLinks)       { startDraai(-draaiSpeed, draaiSpeed); }
+        else if (kanS)       { huidigeStatus = VOLGEN; }
+        else if (snapRechts) { startDraai(draaiSpeed, -draaiSpeed); }
+        else                 { startUTurnMapping(); }
+      }
       break;
     }
 
