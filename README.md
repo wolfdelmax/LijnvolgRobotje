@@ -49,15 +49,12 @@ Als de VL6180X niet gedetecteerd wordt bij opstart blijft de obstakellogica uit 
 ### Omzeil-parameters
 
 - `omzeilDrempelMm` (default 120): afstand in mm waarbij uitwijken start
-- `omzeilHoekUit` (default 70°) / `omzeilHoekTerug` (default 70°): draaihoeken (empirisch getuned — meetkundig zou de tweede groter moeten zijn dan de eerste, maar kleine onnauwkeurigheden in `ticksPerGraad` en motor-symmetrie compenseren dat)
-- `omzeilZijTicks` (default 650): maximum-afstand zowel in fase 2 (langs cilinder) als fase 4 (terugweg-timeout) — **moet getuned worden op de robot**
+- `omzeilHoekUit` (default 70°) / `omzeilHoekTerug` (default 75°): draaihoeken (empirisch getuned — meetkundig zou de tweede groter moeten zijn dan de eerste, maar kleine onnauwkeurigheden in `ticksPerGraad` en motor-symmetrie compenseren dat)
+- `omzeilZijTicks` (default 700): maximum-afstand zowel in fase 2 (langs cilinder) als fase 4 (terugweg-timeout) — **moet getuned worden op de robot**
 - `omzeilSnelheid` (default 45 %): snelheid voor de hele uitwijk-procedure (zowel draaien als rechtdoor) — apart van `snelheidMapping` zodat de manoeuvre rustiger kan
-- `omzeilLijnMinTicks` (default 600): aantal ticks rechtdoor in fase 4 voor er naar de lijn gekeken wordt
+- `omzeilLijnMinTicks` (default 450): aantal ticks rechtdoor in fase 4 voor er naar de lijn gekeken wordt
 - `omzeilCooldownMs` (default 2000): wachttijd na omzeilen voor de sensor opnieuw mag triggeren
 
 ### Vereiste library
 
 In de Arduino IDE installeren via Library Manager: **Adafruit VL6180X**.
-
-
-50 procent : mapping 26041038 (dagmaanduur)
