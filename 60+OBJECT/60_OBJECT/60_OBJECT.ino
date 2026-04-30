@@ -5,7 +5,7 @@
 // ==========================================
 // --- FINETUNING VARIABELEN ---
 // ==========================================
-float Kp = 0.125;
+float Kp = 0.135;
 float Kd = 0.007;
 int lastError = 0;
 
@@ -16,26 +16,28 @@ int kalibratieSnelheid = 30;
 int snelheidDraaien    = 40;  // rotatiesnelheid voor DRAAIEN en UTURN
 
 // --- ENCODER AFSTANDEN ---
-int doorrijTicks  = 125;
+int doorrijTicks  = 110;
 int eindvlakTicks = 280;
 
 // --- DRAAIEN ---
 const float ticksPerGraad = 2.135f;
-float maxDraaiGraden = 155.0f;  // max rotatie tijdens DRAAIEN
+float minDraaiGraden = 10.0f;       // min rotatie voor detectie tijdens draaien
+float maxDraaiGraden = 155.0f;      // max rotatie tijdens DRAAIEN
 const long maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
-int lijnDetectieIdx = 2;        // inner-sensor index voor lijn-detectie tijdens draai
-                                // 3 = centrum (3+4), 2 = vroeger (2+5), 1 = nog vroeger (1+6). bv gerbuikt sensore 2 en 5
-int kruispuntDrempel = 4;       // min aantal donkere sensoren voor kruispunt-detectie
-int donkerDrempel    = 600;     // sensor-waarde drempel om "donker" te zijn
+int lijnDetectieIdx = 2;            // inner-sensor index voor lijn-detectie tijdens draai
+                                    // 3 = centrum (3+4), 2 = vroeger (2+5), 1 = nog vroeger (1+6). bv gerbuikt sensore 2 en 5
+int kruispuntDrempel = 4;           // min aantal donkere sensoren voor kruispunt-detectie
+int donkerDrempel    = 600;         // sensor-waarde drempel om "donker" te zijn
 
 // --- OBSTAKEL OMZEILEN (VL6180X ToF) ---
-int   omzeilDrempelMm     = 120;    // afstand (mm) waarbij robot begint uit te wijken
-float omzeilHoekUit       = 70.0f;  // graden eerste draai (rechts weg van obstakel)
-float omzeilHoekTerug     = 65.0f;  // graden tweede draai (links terug naar lijn)
-int   omzeilZijTicks      = 700;    // ticks rechtdoor langs het obstakel (empirisch getuned)
-int   omzeilSnelheid      = 60;     // procent — snelheid voor de hele uitwijk-procedure
-int   omzeilLijnMinTicks  = 525;    // pas vanaf deze ticks in NAAR_LIJN naar lijn zoeken
-unsigned long omzeilCooldownMs = 2000; // tijd na omzeilen voor opnieuw mag triggeren
+int   omzeilDrempelMm         = 120;   // afstand (mm) waarbij robot begint uit te wijken
+float omzeilHoekUit           = 70.0f; // graden eerste draai (rechts weg van obstakel)
+float omzeilHoekTerug         = 65.0f; // graden tweede draai (links terug naar lijn)
+int   omzeilZijTicks          = 700;   // ticks rechtdoor langs het obstakel (empirisch getuned)
+int   omzeilSnelheid          = 60;    // procent — snelheid voor de hele uitwijk-procedure
+int   omzeilLijnMinTicks      = 525;   // pas vanaf deze ticks in NAAR_LIJN naar lijn zoeken
+unsigned long omzeilCooldownMs = 5000; // tijd na omzeilen voor opnieuw mag triggeren
+int   omzeilBevestigingsAantal = 3;    // aantal opeenvolgende metingen onder drempel
 
 // --- LED ---
 const int pinLed = 2;
@@ -48,6 +50,7 @@ Adafruit_VL6180X tof = Adafruit_VL6180X();
 bool tofBeschikbaar = false;
 uint8_t laatsteAfstandMm = 255;
 unsigned long laatsteOmzeilTijd = 0;
+int omzeilBevestigingsTeller = 0;
 
 const uint8_t SensorCount = 8;
 uint16_t sensorValues[SensorCount];
@@ -108,7 +111,6 @@ void setup() {
   pinMode(pinBoot, INPUT_PULLUP);
   pinMode(pinLed, OUTPUT);
 
-  // Modus-keuze venster: 2s lang LED snel knipperen, BOOT indrukken = always-right
   unsigned long modusEinde = millis() + 2000;
   while (millis() < modusEinde) {
     digitalWrite(pinLed, (millis() / 100) % 2);
@@ -186,7 +188,7 @@ void runMapping() {
 
     case VOLGEN: {
       if (tofBeschikbaar
-          && laatsteAfstandMm < omzeilDrempelMm
+          && omzeilBevestigingsTeller >= omzeilBevestigingsAantal
           && (millis() - laatsteOmzeilTijd) > omzeilCooldownMs) {
         startObstakelOmzeilen();
         break;
@@ -260,7 +262,7 @@ void runMapping() {
       uint16_t draaiPositie = qtr.readLineBlack(sensorValues);
       int idxL = lijnDetectieIdx, idxR = 7 - lijnDetectieIdx;
       long draaiTicks = (encoderTellerL + encoderTellerR) / 2;
-      const long minDraaiTicks = (long)(30 * ticksPerGraad);
+      const long minDraaiTicks = (long)(minDraaiGraden * ticksPerGraad);
       if (draaiTicks >= minDraaiTicks) {
         if (!lijnVerlaten) {
           if (sensorValues[idxL] < 300 && sensorValues[idxR] < 300) lijnVerlaten = true;
@@ -343,7 +345,6 @@ void runMapping() {
     case OBSTAKEL_NAAR_LIJN: {
       long ticks = (encoderTellerL + encoderTellerR) / 2;
 
-      // Pas vanaf omzeilLijnMinTicks naar de lijn kijken (vermijdt false positives van cilinderrand).
       if (ticks >= omzeilLijnMinTicks) {
         bool lijnGezien = sensorValues[0] > donkerDrempel
                        || sensorValues[1] > donkerDrempel
@@ -357,7 +358,6 @@ void runMapping() {
         }
       }
 
-      // Timeout: na omzeilZijTicks toch terug naar VOLGEN, ook zonder lijn.
       if (ticks >= omzeilZijTicks) {
         lastError = 0;
         laatsteOmzeilTijd = millis();
@@ -424,12 +424,18 @@ void leesTof() {
     uint8_t r = tof.readRangeResult();
     if (tof.readRangeStatus() == VL6180X_ERROR_NONE) {
       laatsteAfstandMm = r;
+      if (r < omzeilDrempelMm) {
+        omzeilBevestigingsTeller++;
+      } else {
+        omzeilBevestigingsTeller = 0;
+      }
     }
   }
 }
 
 void startObstakelOmzeilen() {
   encoderTellerL = encoderTellerR = 0;
+  omzeilBevestigingsTeller = 0;
   setMotorLinks(omzeilSpeed);
   setMotorRechts(-omzeilSpeed);
   huidigeStatus = OBSTAKEL_DRAAI_UIT;

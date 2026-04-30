@@ -21,6 +21,7 @@ int eindvlakTicks = 280;
 
 // --- DRAAIEN ---
 const float ticksPerGraad = 2.135f;
+float minDraaiGraden = 10.0f; // min rotatatie voor detectie tijdens draaien
 float maxDraaiGraden = 155.0f;  // max rotatie tijdens DRAAIEN
 const long maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
 int lijnDetectieIdx = 2;        // inner-sensor index voor lijn-detectie tijdens draai
@@ -260,7 +261,7 @@ void runMapping() {
       uint16_t draaiPositie = qtr.readLineBlack(sensorValues);
       int idxL = lijnDetectieIdx, idxR = 7 - lijnDetectieIdx;
       long draaiTicks = (encoderTellerL + encoderTellerR) / 2;
-      const long minDraaiTicks = (long)(30 * ticksPerGraad);
+      const long minDraaiTicks = (long)(minDraaiGraden * ticksPerGraad);
       if (draaiTicks >= minDraaiTicks) {
         if (!lijnVerlaten) {
           if (sensorValues[idxL] < 300 && sensorValues[idxR] < 300) lijnVerlaten = true;
