@@ -3,7 +3,7 @@
 // ==========================================
 // --- FINETUNING VARIABELEN ---
 // ==========================================
-float Kp = 0.125;
+float Kp = 0.135;
 float Kd = 0.007;
 int lastError = 0;
 
@@ -14,11 +14,12 @@ int kalibratieSnelheid = 30;
 int snelheidDraaien    = 40;  // rotatiesnelheid voor DRAAIEN en UTURN
 
 // --- ENCODER AFSTANDEN ---
-int doorrijTicks  = 125;
+int doorrijTicks  = 110;
 int eindvlakTicks = 280;
 
 // --- DRAAIEN ---
 const float ticksPerGraad = 2.135f;
+float minDraaiGraden = 10.0f; // min rotatie voor detectie
 float maxDraaiGraden = 155.0f;  // max rotatie tijdens DRAAIEN
 const long maxDraaiTicks = (long)(maxDraaiGraden * ticksPerGraad);
 int lijnDetectieIdx = 2;        // inner-sensor index voor lijn-detectie tijdens draai
@@ -225,7 +226,7 @@ void runMapping() {
       uint16_t draaiPositie = qtr.readLineBlack(sensorValues);
       int idxL = lijnDetectieIdx, idxR = 7 - lijnDetectieIdx;
       long draaiTicks = (encoderTellerL + encoderTellerR) / 2;
-      const long minDraaiTicks = (long)(30 * ticksPerGraad);
+      const long minDraaiTicks = (long)(minDraaiGraden * ticksPerGraad);
       if (draaiTicks >= minDraaiTicks) {
         if (!lijnVerlaten) {
           if (sensorValues[idxL] < 300 && sensorValues[idxR] < 300) lijnVerlaten = true;
