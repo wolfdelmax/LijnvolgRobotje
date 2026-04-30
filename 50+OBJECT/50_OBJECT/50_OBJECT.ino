@@ -5,7 +5,7 @@
 // ==========================================
 // --- FINETUNING VARIABELEN ---
 // ==========================================
-float Kp = 0.125;
+float Kp = 0.135;
 float Kd = 0.007;
 int lastError = 0;
 
@@ -16,7 +16,7 @@ int kalibratieSnelheid = 30;
 int snelheidDraaien    = 40;  // rotatiesnelheid voor DRAAIEN en UTURN
 
 // --- ENCODER AFSTANDEN ---
-int doorrijTicks  = 125;
+int doorrijTicks  = 110;
 int eindvlakTicks = 280;
 
 // --- DRAAIEN ---
@@ -35,7 +35,7 @@ float omzeilHoekTerug     = 65.0f;  // graden tweede draai (links terug naar lij
 int   omzeilZijTicks      = 700;    // ticks rechtdoor langs het obstakel (empirisch getuned)
 int   omzeilSnelheid      = 60;     // procent — snelheid voor de hele uitwijk-procedure
 int   omzeilLijnMinTicks  = 525;    // pas vanaf deze ticks in NAAR_LIJN naar lijn zoeken
-unsigned long omzeilCooldownMs = 2000; // tijd na omzeilen voor opnieuw mag triggeren
+unsigned long omzeilCooldownMs = 5000; // tijd na omzeilen voor opnieuw mag triggeren
 
 // --- LED ---
 const int pinLed = 2;
