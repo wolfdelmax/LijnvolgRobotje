@@ -16,8 +16,9 @@ int kalibratieSnelheid = 30;
 int snelheidDraaien    = 40;  // rotatiesnelheid voor DRAAIEN en UTURN
 
 // --- ENCODER AFSTANDEN ---
-int doorrijTicks  = 110;
-int eindvlakTicks = 280;
+int doorrijTicks         = 110;
+int eindvlakTicks        = 280;
+int startRechtdoorTicks  = 76;  // 5cm rechtdoor zonder detectie bij opstart
 
 // --- DRAAIEN ---
 const float ticksPerGraad = 2.135f;
@@ -30,14 +31,14 @@ int kruispuntDrempel = 4;           // min aantal donkere sensoren voor kruispun
 int donkerDrempel    = 600;         // sensor-waarde drempel om "donker" te zijn
 
 // --- OBSTAKEL OMZEILEN (VL6180X ToF) ---
-int   omzeilDrempelMm         = 120;   // afstand (mm) waarbij robot begint uit te wijken
-float omzeilHoekUit           = 70.0f; // graden eerste draai (rechts weg van obstakel)
-float omzeilHoekTerug         = 65.0f; // graden tweede draai (links terug naar lijn)
-int   omzeilZijTicks          = 700;   // ticks rechtdoor langs het obstakel (empirisch getuned)
-int   omzeilSnelheid          = 60;    // procent — snelheid voor de hele uitwijk-procedure
-int   omzeilLijnMinTicks      = 525;   // pas vanaf deze ticks in NAAR_LIJN naar lijn zoeken
-unsigned long omzeilCooldownMs = 5000; // tijd na omzeilen voor opnieuw mag triggeren
-int   omzeilBevestigingsAantal = 3;    // aantal opeenvolgende metingen onder drempel
+int   omzeilDrempelMm          = 120;   // afstand (mm) waarbij robot begint uit te wijken
+float omzeilHoekUit            = 70.0f; // graden eerste draai (rechts weg van obstakel)
+float omzeilHoekTerug          = 65.0f; // graden tweede draai (links terug naar lijn)
+int   omzeilZijTicks           = 700;   // ticks rechtdoor langs het obstakel (empirisch getuned)
+int   omzeilSnelheid           = 60;    // procent — snelheid voor de hele uitwijk-procedure
+int   omzeilLijnMinTicks       = 525;   // pas vanaf deze ticks in NAAR_LIJN naar lijn zoeken
+unsigned long omzeilCooldownMs = 5000;  // tijd na omzeilen voor opnieuw mag triggeren
+int   omzeilBevestigingsAantal = 3;     // aantal opeenvolgende metingen onder drempel
 
 // --- LED ---
 const int pinLed = 2;
@@ -146,6 +147,7 @@ void setup() {
   huidigeRobotModus = MAPPING;
   kalibreerRobot();
 
+  encoderTellerL = encoderTellerR = 0;
   startTime = millis();
 }
 
@@ -187,6 +189,14 @@ void runMapping() {
   switch (huidigeStatus) {
 
     case VOLGEN: {
+      // Startfase: eerste 5cm rechtdoor zonder detectie
+      long gemTicks = (encoderTellerL + encoderTellerR) / 2;
+      if (gemTicks < startRechtdoorTicks) {
+        setMotorLinks(baseSpeed);
+        setMotorRechts(baseSpeed);
+        break;
+      }
+
       if (tofBeschikbaar
           && omzeilBevestigingsTeller >= omzeilBevestigingsAantal
           && (millis() - laatsteOmzeilTijd) > omzeilCooldownMs) {
