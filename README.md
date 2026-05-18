@@ -1,26 +1,32 @@
-# Lijnvolg-robot met mapping
+# Lijnvolg-robot met mapping — technische documentatie
 
-ESP32-gebaseerde lijnvolger die een parcours met vertakkingen kan verkennen. Gebruikt 8 QTR-sensoren voor lijndetectie, twee DC-motoren met encoders voor aandrijving en odometrie, en optioneel een VL6180X ToF-sensor voor obstakeldetectie.
+## Overzicht
 
-## Repo-structuur
+ESP32-gebaseerde lijnvolger die een parcours met vertakkingen kan verkennen. De robot gebruikt:
 
-De repo bevat drie Arduino-sketches:
+- 8 QTR-sensoren voor lijndetectie
+- twee DC-motoren met encoders voor aandrijving en odometrie
+- optioneel een VL6180X ToF-sensor voor obstakeldetectie
 
-- [50/50PROCENT/50PROCENT.ino](50/50PROCENT/50PROCENT.ino) — basisversie: lijnvolgen + mapping zonder obstakeldetectie.
-- [50+OBJECT/50_OBJECT/50_OBJECT.ino](50+OBJECT/50_OBJECT/50_OBJECT.ino) — zelfde gedrag plus obstakelontwijking via VL6180X ToF-sensor.
-- [Gradenhoekenticks/testticksdraaien/testticksdraaien.ino](Gradenhoekenticks/testticksdraaien/testticksdraaien.ino) — kalibratie-sketch om `ticksPerGraad` te bepalen voor jouw motor/wielen-combinatie.
+De code bestaat uit drie afzonderlijke Arduino-sketches:
 
-Upload één van de twee eerste sketches als hoofdprogramma; de derde is enkel een afstellingstool.
+| Sketch | Bestandsnaam | Doel |
+|---|---|---|
+| Basis | `50PROCENT.ino` | lijnvolgen + mapping zonder obstakeldetectie |
+| Met obstakels | `50_OBJECT.ino` | zelfde gedrag plus obstakelontwijking via VL6180X |
+| Kalibratietool | `testticksdraaien.ino` | meet `ticksPerGraad` voor jouw motor/wielen-combinatie |
+
+Eén van de eerste twee wordt als hoofdprogramma op de ESP32 geflasht; de derde is enkel een afstellingstool.
 
 ## Werking
 
-De robot volgt een zwarte lijn met een PD-regelaar. Bij detectie van een vertakking (donkere sensoren aan een buitenkant + minimum aantal totale donkere sensoren) gaat hij naar het kruispunt-centrum, beslist welke richting te nemen en draait. Bij een doodloper voert hij een U-turn uit. Komt er een obstakel (cilinder Ø20 cm) op de lijn te liggen, dan wijkt de robot er rechts omheen via een symmetrische uitwijk-route op een aparte lagere snelheid en pikt daarna de lijn weer op. *(Obstakelontwijking enkel in de `50_OBJECT`-sketch.)*
+De robot volgt een zwarte lijn met een PD-regelaar. Bij detectie van een vertakking (donkere sensoren aan een buitenkant + minimum aantal totale donkere sensoren) rijdt hij naar het kruispunt-centrum, beslist welke richting te nemen en draait. Bij een doodloper voert hij een U-turn uit. Komt er een obstakel (cilinder Ø20 cm) op de lijn te liggen, dan wijkt de robot er rechts omheen via een symmetrische uitwijk-route op een aparte lagere snelheid en pikt daarna de lijn weer op. *(Obstakelontwijking enkel in `50_OBJECT.ino`.)*
 
 Bij opstart kalibreert de robot eerst de QTR-sensoren door 4× links/rechts heen-en-weer te draaien op `kalibratieSnelheid` (~10 seconden). Pas daarna gaat hij in mapping-modus.
 
 ## Modi
 
-Via de BOOT-knop op de ESP32 (indrukken tijdens 2-seconden venster bij opstart, terwijl de LED knippert):
+Via de BOOT-knop op de ESP32 (indrukken tijdens het 2-seconden venster bij opstart, terwijl de LED knippert):
 
 - **Always-left** (default): bij een keuze gaat hij links → rechtdoor → rechts → U-turn. LED brandt continu.
 - **Always-right**: bij een keuze gaat hij rechts → rechtdoor → links → U-turn. LED uit.
@@ -32,8 +38,8 @@ De aan/uit-schakelaar (pin 1) start en stopt de robot tijdens een run.
 | Functie | Pin(s) |
 |---|---|
 | QTR-sensoren (8×) | 23, 15, 32, 27, 26, 14, 12, 13 |
-| Motor links (TB6612: AIN1/AIN2/PWMA) | 16, 4, 18 |
-| Motor rechts (TB6612: BIN1/BIN2/PWMB) | 17, 5, 19 |
+| Motor links (TB6612: AIN1 / AIN2 / PWMA) | 16, 4, 18 |
+| Motor rechts (TB6612: BIN1 / BIN2 / PWMB) | 17, 5, 19 |
 | Encoder links / rechts | 34 / 35 |
 | BOOT-knop (modus-keuze) | 0 |
 | Aan/uit-schakelaar | 1 |
@@ -42,16 +48,18 @@ De aan/uit-schakelaar (pin 1) start en stopt de robot tijdens een run.
 
 > ⚠️ Pin 1 is op de meeste ESP32-boards ook TX0. Als de schakelaar aan staat tijdens flashen kan dat de upload verstoren — zet hem in de "uit"-stand voor het uploaden.
 
-## Vereiste libraries
+## Vereiste software
 
-In de Arduino IDE installeren via Library Manager:
+**Arduino IDE** met de **ESP32 Arduino core 3.x** (nodig voor `ledcAttach`).
+
+**Libraries** (te installeren via Library Manager):
 
 - **QTRSensors** (Pololu)
-- **Adafruit VL6180X** *(alleen nodig voor de `50_OBJECT`-sketch)*
+- **Adafruit VL6180X** *(alleen nodig voor `50_OBJECT.ino`)*
 
-Board: ESP32 Dev Module (of een variant die `ledcAttach` ondersteunt — werkt met ESP32 Arduino core 3.x).
+**Board-instelling**: ESP32 Dev Module, of een variant met dezelfde pinout.
 
-## Tuning
+## Tuning-parameters (hoofdsketches)
 
 De belangrijkste parameters staan bovenaan in beide hoofdsketches:
 
@@ -61,11 +69,11 @@ De belangrijkste parameters staan bovenaan in beide hoofdsketches:
 - `kruispuntDrempel`: aantal donkere sensoren nodig voor kruispunt-detectie
 - `maxDraaiGraden`: max rotatie tijdens een kruispunt-draai voor hij begint terug te zoeken
 - `lijnDetectieIdx`: hoe vroeg een lijn als "gevonden" wordt gezien tijdens rotatie
-- `ticksPerGraad`: encoder-ticks per graad rotatie — bepaal met de `testticksdraaien`-sketch
+- `ticksPerGraad`: encoder-ticks per graad rotatie — bepaal met de kalibratietool (zie onder)
 
 ## Obstakel omzeilen (VL6180X ToF)
 
-*Enkel in [50_OBJECT.ino](50+OBJECT/50_OBJECT/50_OBJECT.ino).*
+*Enkel in `50_OBJECT.ino`.*
 
 Een VL6180X ToF-sensor (I²C op SDA=21, SCL=22) meet vooraan continu de afstand tot eventuele obstakels. De sensor draait in **continuous mode** met een meet-periode van 50 ms, zodat het uitlezen non-blocking is en het lijnvolgen niet vertraagt. Lezingen waarvan de status niet OK is worden genegeerd (de vorige geldige meting blijft staan).
 
@@ -96,7 +104,7 @@ Als de VL6180X niet gedetecteerd wordt bij opstart blijft de obstakellogica uit 
 
 ## `ticksPerGraad` kalibreren
 
-De [testticksdraaien.ino](Gradenhoekenticks/testticksdraaien/testticksdraaien.ino)-sketch laat de robot op commando een vast aantal ticks draaien. Procedure:
+De `testticksdraaien.ino`-sketch laat de robot op commando een vast aantal ticks draaien. Procedure:
 
 1. Zet de robot op de grond met een referentielijntje (tape).
 2. Pas `TICKS_PER_DRAAI` aan in de sketch (bv. 200) en upload.
@@ -105,3 +113,14 @@ De [testticksdraaien.ino](Gradenhoekenticks/testticksdraaien/testticksdraaien.in
 5. Bereken `ticksPerGraad = TICKS_PER_DRAAI / werkelijke_graden` en vul die in de hoofdsketch in.
 
 Herhaal tot 90° draaien betrouwbaar 90° geeft.
+
+## Snelstart
+
+1. Sluit de ESP32 aan via USB en open de Arduino IDE.
+2. Installeer de **ESP32 Arduino core (3.x)**, **QTRSensors** en — voor obstakelontwijking — **Adafruit VL6180X**.
+3. Open de gewenste sketch (`50PROCENT.ino` of `50_OBJECT.ino`).
+4. Selecteer board **ESP32 Dev Module**.
+5. Zet de aan/uit-schakelaar in de "uit"-stand en flash de sketch.
+6. Plaats de robot op de lijn. Bij opstart: BOOT-knop ingedrukt houden tijdens het 2 s knipperen voor *always-right*; loslaten/niet drukken voor *always-left*.
+7. Wacht tot de kalibratie klaar is (LED uit, robot stilstaand).
+8. Zet de aan/uit-schakelaar op "aan" om te starten.
